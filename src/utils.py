@@ -101,3 +101,40 @@ def topk_feats(
     sorted_values, sorted_indices = torch.sort(values, descending=True, dim=-1)
     sorted_idx = torch.gather(idx, -1, sorted_indices)
     return sorted_idx, sorted_values
+
+from itertools import chain
+
+def random_toks_with_keywords(model, keywords=None, seq_len=20):
+    """
+    Generate a random sequence of tokens, inserting specific keywords at random positions.
+    Returns:
+        text (str): The generated text.
+        kw_idx (list): List of positions where keywords were inserted.
+    """    
+    random.shuffle(keywords)
+    kw_toks = model.tokenizer([" " + kw for kw in keywords]).input_ids
+    kw_toks = list(chain(*kw_toks))
+    
+    assert len(kw_toks) == len(keywords), "Keywords are being split into multiple tokens."
+    
+    kw_idx = sorted(random.sample(range(seq_len), len(keywords)))
+    kw_idx[-1] = seq_len-1
+    
+    random_toks = random_tokens(model, seq_len)
+    for kw, idx in zip(kw_toks, kw_idx):
+        random_toks[0,idx] = kw
+        
+    return random_toks, kw_idx
+        
+def random_tokens(
+    model: HookedTransformer, seq_len: int, batch_size: int = 1
+) -> Int[Tensor, "batch_size seq_len"]:
+    """
+    Generates a sequence of random tokens
+
+    Outputs are:
+        rep_tokens: [batch_size, 1+2*seq_len]
+    """
+    prefix = (torch.ones(batch_size, 1) * model.tokenizer.bos_token_id).long()
+    rnd_tok = torch.randint(0, model.cfg.d_vocab, (batch_size, seq_len-1), dtype=torch.int64)
+    return torch.cat([prefix, rnd_tok], dim=1)
