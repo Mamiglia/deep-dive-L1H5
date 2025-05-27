@@ -24,8 +24,8 @@ def display_dashboard(
     sae_release="gpt2-small-resid-post-v5-32k",
     sae_id="blocks.10.hook_resid_post",
     latent_idx=0,
-    width=800,
-    height=600,
+    width=600,
+    height=400,
 ):
     """Displays Neuronpedia for one feature and latent index. 
     """
