@@ -21,12 +21,24 @@ import torch.nn.functional as F
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
-d_sae = gpt2_sae.W_dec.shape[0]
 
 @torch.inference_mode()
-def sae_decode(sae: HookedSAETransformer, feature_idx : int, feature_norm=1, simple=True) -> Tensor:
+def sae_decode(sae: SAE, feature_idx : int, feature_norm=1, simple=True) -> Tensor:
+    """
+    Decodes a feature from a Sparse Autoencoder (SAE) given its feature index.
+    Args:
+        sae (SAE): The Sparse Autoencoder model containing the decoder weights.
+        feature_idx (int): The index of the feature to decode.
+        feature_norm (float, optional): The normalization factor to apply to the feature. Defaults to 1.
+        simple (bool, optional): If True, returns the decoded feature using a simple linear transformation.
+            If False, constructs a feature vector and decodes it using the SAE's decode method. Defaults to True.
+    Returns:
+        Tensor: A vector in the semantic space of the residual stream.
+    """
     if simple:
         return sae.W_dec[feature_idx].unsqueeze(0) * feature_norm
+    
+    d_sae = sae.W_dec.shape[0]
     
     feats = torch.zeros((1, d_sae), device=device)
     feats[:,feature_idx] = feature_norm
@@ -43,6 +55,22 @@ def feat_attn_scores_q(
     layer_norm = False,
     sae_encoder = False,
 ) -> Tensor:
+    """Computes the attention scores for a specific source feature in a Sparse Autoencoder (SAE) model.
+    Given a source feature index, this function calculates which target features are most attended to by the source feature,
+    optionally applying layer normalization and/or encoding the query through the SAE encoder.
+    Args:
+        sae (HookedSAETransformer): The SAE Transformer model instance.
+        W_KQ (FactoredMatrix): The key-query projection matrix of shape (d, d).
+        src_feature (int): The index of the source feature for which attention scores are computed.
+        layer_norm (bool, optional): If True, applies layer normalization to the source and decoder weights. Defaults to False.
+        sae_encoder (bool, optional): If True, passes the query through the SAE encoder instead of using the decoder weights. Defaults to False.
+    Returns:
+        Tensor: The attention scores for the target features, either as encoded by the SAE encoder or projected via the decoder weights.
+    Notes:
+        - If `layer_norm` is True, both the source feature vector and decoder weights are layer-normalized.
+        - If `sae_encoder` is True, the query is passed through the SAE encoder and the result is returned.
+        - Otherwise, the query is projected using the decoder weights to obtain the attention scores.
+    """
     src = sae_decode(sae, src_feature, simple=True) # 1 d
     if layer_norm:
         src = F.layer_norm(src, (sae.cfg.d_in, ))
@@ -68,6 +96,15 @@ def feat_attn_scores_k(
     dest_feature: int,
     layer_norm = False,
 ) -> Tensor:
+    """Computes the attention scores for a given destination feature using the key projection matrix.
+        Args:
+            sae (HookedSAETransformer): The transformer model containing the decoder and configuration.
+            W_KQ (FactoredMatrix): The key/query projection matrix of shape (d, d).
+            dest_feature (int): The index of the destination feature to compute attention scores for.
+            layer_norm (bool, optional): Whether to apply layer normalization to the destination and decoder weights. Defaults to False.
+        Returns:
+            Tensor: The attention scores between the destination feature and all SAE features.
+    """
     dest = sae_decode(sae, dest_feature, simple=True) # 1 d
     if layer_norm:
         dest = F.layer_norm(dest, (sae.cfg.d_in, ))

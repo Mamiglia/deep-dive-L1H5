@@ -27,6 +27,8 @@ def display_dashboard(
     width=800,
     height=600,
 ):
+    """Displays Neuronpedia for one feature and latent index. 
+    """
     release = get_pretrained_saes_directory()[sae_release]
     neuronpedia_id = release.neuronpedia_id[sae_id]
 
@@ -43,6 +45,7 @@ def load_model_sae(
     device=device,
     disable_normalization=True
 ):
+    """Loads a model and its SAE"""
     model = HookedSAETransformer.from_pretrained(model_name, device=device)
     sae, cfg_dict, sparsity = SAE.from_pretrained(
         release=sae_release,
@@ -62,6 +65,7 @@ def load_model_sae(
 
 @torch.no_grad()
 def get_kq(model: HookedTransformer, layer:int, head_idx:int, reverse=False):
+    """Gets W_KQ matrix for a specific attention head in a model"""
     W_K = model.blocks[layer].attn.W_K[head_idx]
     W_Q = model.blocks[layer].attn.W_Q[head_idx]
 
