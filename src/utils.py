@@ -1,4 +1,7 @@
+from typing import Tuple
 import torch
+from torch import Tensor
+from jaxtyping import Float, Int
 import numpy as np
 from transformer_lens.components import MLP, Embed, LayerNorm, Unembed
 from transformer_lens.hook_points import HookPoint
@@ -74,3 +77,27 @@ def get_kq(model: HookedTransformer, layer:int, head_idx:int, reverse=False):
         return FactoredMatrix(W_Q, W_K.T)
 
     return FactoredMatrix(W_K, W_Q.T)
+
+
+def topk_feats(
+    feats: Float[Tensor, "... d_sae"],
+    k: int = 8,
+) -> Tuple[Int[Tensor, "... k"], Float[Tensor, "... k"]]:
+    """
+    Selects the top-k features along the last dimension of the input tensor.
+    Args:
+        feats (Float[Tensor, "... d_sae"]): Input tensor containing feature values. The last dimension represents the features.
+        k (int, optional): Number of top features to select. Defaults to 8.
+    Returns:
+        Tuple[Int[Tensor, "... k"], Float[Tensor, "... k"]]: 
+            A tuple containing:
+                - Indices of the top-k features for each entry (same shape as input except last dimension is k).
+                - Values of the top-k features for each entry (same shape as input except last dimension is k).
+    Notes:
+        The returned indices and values are sorted in descending order of feature values within the top-k selection.
+    """
+    values, idx = torch.topk(feats, k, dim=-1)
+    # Sort within the top-k
+    sorted_values, sorted_indices = torch.sort(values, descending=True, dim=-1)
+    sorted_idx = torch.gather(idx, -1, sorted_indices)
+    return sorted_idx, sorted_values

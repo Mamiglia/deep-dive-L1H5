@@ -15,6 +15,8 @@ from sae_lens import HookedSAETransformer, SAE
 from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
 from IPython.display import HTML, IFrame, clear_output, display
 
+from jaxtyping import Float, Int
+
 from torch import Tensor
 import torch.nn.functional as F
 
@@ -117,4 +119,42 @@ def feat_attn_scores_k(
     
     return key @ W_dec.T
 
+@torch.inference_mode()
+def token2feat_attn(
+    resid : Float[Tensor, "seq d_model"],
+    sae : HookedSAETransformer,
+    W_KQ: Float[Tensor, "d_model d_model"],
+    layer_norm = True,
+    sae_encoder = False,
+) -> Float[Tensor, "d_sae seq"]:
+    """Computes attention scores between an input token's residual stream and the features of a Sparse Autoencoder (SAE).
+    Args:
+        resid (Float[Tensor, "seq d_model"]): The residual stream representation of input tokens, with shape (sequence length, model dimension).
+        sae (HookedSAETransformer): The SAE model containing encoder and decoder weights.
+        W_KQ (Float[Tensor, "d_model d_model"]): The projection matrix used to compute queries from the residual stream.
+        layer_norm (bool, optional): If True, applies layer normalization to the residuals and/or SAE decoder weights. Defaults to True.
+        sae_encoder (bool, optional): If True, passes the query through the SAE encoder instead of using the decoder weights. Defaults to False.
+    Returns:
+        Float[Tensor, "d_sae seq"]: The attention scores between SAE features (d_sae) and input tokens (seq).
+    Notes:
+        - If sae_encoder is True, the function returns the encoded query using the SAE encoder.
+        - If sae_encoder is False, the function projects the query using the SAE decoder weights (optionally layer-normalized).
+        - Layer normalization is applied to the input and/or decoder weights based on the layer_norm flag.
+    """
+    seq, d_model = resid.shape
+    resid = F.layer_norm(resid, (d_model,))
     
+    query = W_KQ @ resid.T
+    
+    if sae_encoder:
+        # pass the query through the SAE encoder 
+        # rather than forcing to use W_D
+        return sae.encode(query.AB.T)
+    
+    
+    W_dec = sae.W_dec # d_sae d
+    
+    if layer_norm:
+        W_dec = F.layer_norm(W_dec, (sae.cfg.d_in,))
+    
+    return W_dec @ query
