@@ -12,6 +12,7 @@ from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_direc
 from IPython.display import HTML, IFrame, clear_output, display
 
 import torch.nn.functional as F
+import random
 
 from jaxtyping import Float, Int
 
@@ -21,8 +22,8 @@ from jaxtyping import Float, Int
 from src.maps import *
 from src.utils import *
 
-LAYER = 5
-HEAD_IDX= 7
+LAYER = 1
+HEAD_IDX= 5
 HOOK_POINT = f"blocks.{LAYER-1}.hook_resid_post"
 
 # %%
@@ -42,15 +43,53 @@ W_KQ = get_kq(model, layer=LAYER, head_idx=HEAD_IDX)
 
 # %%
 import circuitsvis as cv
+import random
 text = "Mary gave John a book because she was leaving."
 
 logits, cache = model.run_with_cache(text, remove_batch_dim=True)
 
 str_tokens = model.to_str_tokens(text)
 for layer in [LAYER]:
+    print("Layer:", layer)
     attention_pattern = cache["pattern", layer]
     display(cv.attention.attention_patterns(tokens=str_tokens, attention=attention_pattern))
 
+
+# %%
+text = "The cat saw a dog. The man looks at the door. the mouse noticed the elephant"
+vocab = list(model.tokenizer.get_vocab().keys())
+random_tokens = [random.choice(vocab) for _ in range(20)]
+
+# Replace GPT2's whitespace special char 'Ġ' with a space for readability
+def decode_gpt2_token(token):
+    return token.replace("Ġ", " ")
+
+text = " ".join([decode_gpt2_token(tok) for tok in random_tokens])
+print("Random text:", text)
+
+# Insert "red", "green", "blue" at random positions in the random_tokens list
+color_words = ["red", "green", "blue"]
+color_words = ["cat", "dog", "mouse"]
+for color in color_words:
+    idx = random.randint(0, len(random_tokens))
+    random_tokens.insert(idx, color)
+text = " ".join([decode_gpt2_token(tok) for tok in random_tokens])
+# remove double space:
+text = text.replace("  ", " ")
+print("Random text with colors:", text)
+
+# %%
+logits, cache = model.run_with_cache(text, remove_batch_dim=True)
+
+str_tokens = model.to_str_tokens(text)
+for layer in [LAYER]:
+    print("Layer:", layer)
+    attention_pattern = cache["pattern", layer]
+    display(cv.attention.attention_patterns(tokens=str_tokens, attention=attention_pattern))
+
+# Comment:
+# out of random text with specific keywords it appears that head 1.5 may be a "semantic head", i.e. a head that attend to tokens that are semantically associated (animals, colors). 
+# This is in line with https://www.alignmentforum.org/posts/xmegeW5mqiBsvoaim/we-inspected-every-head-in-gpt-2-small-using-saes-so-you-don which describes 1.5 as "Succession or pairs related behavior. single-token entity (10/10) (men/male/children, human/people/children/girls, he/him/them/his, right, 7, roman numerals, First/Second/Third, third/fourth,  2015-2017, abc)"
 
 # %%
 resid = cache[HOOK_POINT]
@@ -61,62 +100,35 @@ resid = F.layer_norm(resid, (d_model, ))
 feats = sae.encode(resid)
 
 # "she" features:
-print(torch.argsort(feats[-4], descending=True)[:8])
-print(feats[-4][torch.argsort(feats[-4], descending=True)[:8]])
+print(torch.argsort(feats[-2], descending=True)[:8])
+print(feats[-4][torch.argsort(feats[-2], descending=True)[:8]])
 
-def topk_feats(
-    feats: Float[Tensor, "... d_sae"],
-    k: int = 8,
-):
-    values, idx = torch.topk(feats, k, dim=-1)
-    # Sort within the top-k
-    sorted_values, sorted_indices = torch.sort(values, descending=True, dim=-1)
-    sorted_idx = torch.gather(idx, -1, sorted_indices)
-    return sorted_idx, sorted_values
     
 
 # %%
 
-@torch.inference_mode()
-def token2feat_attn(
-    resid : Float[Tensor, "seq d_model"],
-    sae : HookedSAETransformer,
-    W_KQ: Float[Tensor, "d_model d_model"],
-    layer_norm = True,
-):
-    seq, d_model = resid.shape
-    resid = F.layer_norm(resid, (d_model,))
-    
-    query = W_KQ @ resid.T
-    
-    W_dec = sae.W_dec # d_sae d
-    
-    if layer_norm:
-        W_dec = F.layer_norm(W_dec, (sae.cfg.d_in,))
-    
-    return W_dec @ query
 
 resid = cache[HOOK_POINT]
-feat_attn = token2feat_attn(resid, sae, W_KQ).AB.T
+feat_attn = token2feat_attn(resid, sae, W_KQ, sae_encoder=False)
 
-dest_feat_idx, _ = topk_feats(feat_attn,12)
+dest_feat_idx, _ = topk_feats(feat_attn.AB.T,12)
 
 # %%
-for i in range(8,12):
-    display_dashboard(latent_idx=dest_feat_idx[3][i], sae_id = HOOK_POINT)
+for i in range(8):
+    display_dashboard(latent_idx=dest_feat_idx[-2][i], sae_id = HOOK_POINT)
 
 # %%
 resid = cache[HOOK_POINT]
 resid = F.layer_norm(resid, (d_model, ))
 src_feats = sae.encode(resid)
 src_feat_idx, _ = topk_feats(src_feats,12)
-for i in range(8,12):
-    display_dashboard(latent_idx=src_feat_idx[3][i], sae_id = HOOK_POINT)
+for i in range(8):
+    display_dashboard(latent_idx=src_feat_idx[-4][i], sae_id = HOOK_POINT)
 # %%
 resid = cache[HOOK_POINT]
 resid = F.layer_norm(resid, (d_model, ))
 feats = sae.encode(resid)
-for t in range(11):
+for t in range(len(str_tokens)):
     token = str_tokens[t]
     src_token = resid[t]
     
@@ -128,7 +140,7 @@ for t in range(11):
     dest_token = resid[dest_t]
     dest_feat_idx, _ = topk_feats(feats[dest_t], 32)
     
-    pred_dest_feat = token2feat_attn(resid, sae, W_KQ).AB.T[t]
+    pred_dest_feat = token2feat_attn(resid, sae, W_KQ, sae_encoder=False).AB.T[t]
     pred_dest_feat_idx, _ = topk_feats(pred_dest_feat, 32)
     
     # union size: number of indices both in pred_dest_feat_idx and dest_feat_idx
@@ -136,5 +148,10 @@ for t in range(11):
     
     print(len(union), union)
     
-    
+# %% [markdown]
+
+# Tested whether tokens attend to expected features. 
+# Confirmed that animal tokens attend positively at feature #9270 
+# Colours respond positively at features #21000, #22330, #21055
+
 # %%
