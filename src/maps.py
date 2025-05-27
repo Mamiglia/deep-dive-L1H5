@@ -126,7 +126,7 @@ def token2feat_attn(
     W_KQ: Float[Tensor, "d_model d_model"],
     layer_norm = True,
     sae_encoder = False,
-) -> Float[Tensor, "d_sae seq"]:
+) -> Float[Tensor, "... d_sae"]:
     """Computes attention scores between an input token's residual stream and the features of a Sparse Autoencoder (SAE).
     Args:
         resid (Float[Tensor, "seq d_model"]): The residual stream representation of input tokens, with shape (sequence length, model dimension).
@@ -141,7 +141,7 @@ def token2feat_attn(
         - If sae_encoder is False, the function projects the query using the SAE decoder weights (optionally layer-normalized).
         - Layer normalization is applied to the input and/or decoder weights based on the layer_norm flag.
     """
-    seq, d_model = resid.shape
+    d_model = resid.shape[-1]
     resid = F.layer_norm(resid, (d_model,))
     
     query = W_KQ @ resid.T
@@ -157,4 +157,4 @@ def token2feat_attn(
     if layer_norm:
         W_dec = F.layer_norm(W_dec, (sae.cfg.d_in,))
     
-    return W_dec @ query
+    return (W_dec @ query).AB.T
