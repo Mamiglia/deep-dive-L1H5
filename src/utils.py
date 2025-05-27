@@ -138,3 +138,35 @@ def random_tokens(
     prefix = (torch.ones(batch_size, 1) * model.tokenizer.bos_token_id).long()
     rnd_tok = torch.randint(0, model.cfg.d_vocab, (batch_size, seq_len-1), dtype=torch.int64)
     return torch.cat([prefix, rnd_tok], dim=1)
+
+def precision(a, b, pos_idx):
+    """
+    Compute precision given predicted and ground truth feature indices and keyword positions.
+    """
+    assert a.shape == b.shape
+    seq_len = a.shape[0]
+    neg_idx = [i for i in range(seq_len) if i not in pos_idx]
+    
+    intersection = torch.zeros(seq_len)
+    
+    for i in range(seq_len):
+        pred_feat = set(a[i].tolist())
+        gt_feat = set(b[i].tolist())
+        intersection[i] += len(pred_feat & gt_feat)
+        
+    print(intersection)
+    tp = sum(intersection[pos_idx])
+    fp = sum(intersection[neg_idx])
+    if tp + fp == 0:
+        return 0.0
+    return tp / (tp + fp)
+    
+
+KEYWORDS = {
+    "colors": ["blue", "red", "green", "yellow", "purple"],
+    "animals": ["dog", "cat", "mouse", "horse", "sheep"],
+    "fruits": ["apple", "banana", "grape", "peach", "lemon"],
+    "emotions": ["happy", "sad", "angry", "scared", "proud"],
+    "weather": ["rain", "snow", "wind", "storm", "sun"],
+}
+
