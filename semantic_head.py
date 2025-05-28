@@ -86,7 +86,7 @@ KEYWORDS = {
     "numbers": ["2", "69", "4", "22", "32", "50"]
 }
 
-def build_prompt(seq_len=20) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
+def build_prompt(seq_len=64) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
     """Build a prompt of randomly sampled tokens from categories by shuffling them together.
 
     The tokens are sampled from the global KEYWORDS dictionary. The prompt
@@ -222,9 +222,11 @@ def explained_attn_score_metric(
     pred_attn
 ):
     attn = cache["pattern", LAYER]
-    return explained_attn_score(attn, pred_attn)[...,HEAD_IDX,:]
+    score = explained_attn_score(attn, pred_attn)
+    return score[...,HEAD_IDX]
 
 
+@torch.inference_mode()
 def ablate_metric(
     model: HookedTransformer,
     batch,
@@ -305,7 +307,10 @@ plt.show()
 
 # %% [markdown]
 # ## Comment:
-# No component is important to the head 1.5 except for the embedding matrix. Why is this? what happens in the embedding matrix?
+# Components important for the head 1.5:
+# - embedding matrix
+# - mlp0
+# What is the circuit responsible for this?
 # 
 # Why does it attend to the <bos> token when no other token of the same semantic group is present?
 #
