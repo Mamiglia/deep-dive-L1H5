@@ -119,7 +119,7 @@ def random_toks_with_keywords(model, keywords : str | list[str], seq_len=20):
     
     assert len(kw_toks) == len(keywords), "Keywords are being split into multiple tokens."
     
-    kw_idx = sorted(random.sample(range(seq_len), len(keywords)))
+    kw_idx = sorted(random.sample(range(1,seq_len), len(keywords)))
     kw_idx[-1] = seq_len-1
     
     random_toks = random_tokens(model, seq_len)
