@@ -295,4 +295,9 @@ res
 # %%
 plt.scatter(res.values(),res.keys(), )
 
+# %% [markdown]
+# ## Comment:
+# - ablating the attn0 improves performance
+# - all the other components instead decrease performance, are they all important? 
+#   - in particular i'm surprised by pos_embed
 # %%
