@@ -224,7 +224,7 @@ def explained_attn_score_metric(
     pred_attn
 ):
     attn = cache["pattern", LAYER]
-    return explained_attn_score(attn, pred_attn)[:,HEAD_IDX]
+    return explained_attn_score(attn, pred_attn)[...,HEAD_IDX,:]
 
 
 def ablate_metric(
