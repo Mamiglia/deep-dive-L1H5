@@ -214,7 +214,8 @@ def ablate_component(
     t : Float[Tensor, "batch pos d_model"],
     hook: HookPoint,
 ):
-    return torch.zeros_like(t)
+    """Mean-ablate a component"""
+    return torch.ones_like(t) * t.mean(dim=(0,1))
 
 def explained_attn_score_metric(
     cache: ActivationCache,
