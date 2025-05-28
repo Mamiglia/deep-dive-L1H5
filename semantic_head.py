@@ -253,11 +253,11 @@ def ablate_metric(
         model.reset_hooks()
         if component != 'None':
             model.add_hook(component, ablate_component, level=1)
-        _, cache = model.run_with_cache(
-            batch
-        )
+        _, cache = model.run_with_cache(batch,
+            names_filter="blocks.1.attn.hook_pattern")
         
         results[component] = metric(cache).mean().item()
+        del cache
 
     model.reset_hooks()
     return results
