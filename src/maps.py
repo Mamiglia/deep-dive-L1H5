@@ -121,7 +121,7 @@ def feat_attn_scores_k(
 
 @torch.inference_mode()
 def token2feat_attn(
-    resid : Float[Tensor, "seq d_model"],
+    resid : Float[Tensor, "... d_model"],
     sae : HookedSAETransformer,
     W_KQ: Float[Tensor, "d_model d_model"],
     layer_norm = True,
@@ -135,7 +135,7 @@ def token2feat_attn(
         layer_norm (bool, optional): If True, applies layer normalization to the residuals and/or SAE decoder weights. Defaults to True.
         sae_encoder (bool, optional): If True, passes the query through the SAE encoder instead of using the decoder weights. Defaults to False.
     Returns:
-        Float[Tensor, "d_sae seq"]: The attention scores between SAE features (d_sae) and input tokens (seq).
+        Float[Tensor, "... d_sae"]: The attention scores between SAE features (d_sae).
     Notes:
         - If sae_encoder is True, the function returns the encoded query using the SAE encoder.
         - If sae_encoder is False, the function projects the query using the SAE decoder weights (optionally layer-normalized).
