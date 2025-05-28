@@ -83,8 +83,8 @@ KEYWORDS = {
     "fruits": ["apple", "banana", "grape", "peach", "lemon"],
     "emotions": ["happy", "sad", "angry", "scared", "proud"],
     "weather": ["rain", "snow", "wind", "storm", "sun"],
+    "numbers": ["2", "69", "4", "22", "32", "50"]
 }
-
 
 def build_prompt(seq_len=20) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
     """Build a prompt of randomly sampled tokens from categories by shuffling them together.
@@ -263,7 +263,7 @@ def ablate_metric(
     return results
 
 # %% 
-BATCH_SIZE = 32 
+BATCH_SIZE = 64 
 SEQ_LEN = 64
 
 batch = torch.empty((BATCH_SIZE, SEQ_LEN), dtype=torch.long)
@@ -278,6 +278,7 @@ for b in range(BATCH_SIZE):
         toks.insert(0, model.tokenizer.bos_token_id)
     toks = torch.tensor(toks)
     
+    assert toks.shape[0] == SEQ_LEN     
     batch[b] = toks
     attn_batch[b] = attn
 
@@ -290,9 +291,7 @@ res = ablate_metric(
     batch,
     partial(explained_attn_score_metric, pred_attn=attn_batch)
 )
-res
 
-# %%
 plt.scatter(res.values(),res.keys(), )
 
 # %% [markdown]
