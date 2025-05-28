@@ -294,7 +294,9 @@ plt.scatter(res.values(),res.keys(), )
 
 # %% [markdown]
 # ## Comment:
-# - ablating the attn0 improves performance
-# - all the other components instead decrease performance, are they all important? 
-#   - in particular i'm surprised by pos_embed
+# No component is important to the head 1.5 except for the embedding matrix. Why is this? what happens in the embedding matrix?
+# 
+# Why does it attend to the <bos> token when no other token of the same semantic group is present?
+#
+# Why does it not attend to itself or other occurences of the same token?
 # %%
