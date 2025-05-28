@@ -201,7 +201,7 @@ def explained_attn_score(
     prob_q = (gt_attn * pred_attn).sum(dim=-1) # b n s
 
     surprise = - prob_q.log()
-    return surprise.sum(dim=-1)
+    return surprise.mean(dim=-1)
 
 plt.plot(explained_attn_score(gt_attn.unsqueeze(0), attn)[0].numpy(force=True)
 )
@@ -254,14 +254,15 @@ def ablate_metric(
         _, cache = model.run_with_cache(batch,
             names_filter="blocks.1.attn.hook_pattern")
         
-        results[component] = metric(cache).mean().item()
+        res = metric(cache)
+        results[component] = (res.mean().item(), res.std().item())
         del cache
 
     model.reset_hooks()
     return results
 
 # %% 
-BATCH_SIZE = 64 
+BATCH_SIZE = 128 
 SEQ_LEN = 64
 
 batch = torch.empty((BATCH_SIZE, SEQ_LEN), dtype=torch.long)
@@ -290,7 +291,17 @@ res = ablate_metric(
     partial(explained_attn_score_metric, pred_attn=attn_batch)
 )
 
-plt.scatter(res.values(),res.keys(), )
+# Unpack means and stds for each component
+components = list(res.keys())
+means = [res[c][0] for c in components]
+stds = [res[c][1] for c in components]
+
+plt.figure(figsize=(8, 5))
+plt.barh(components, means, xerr=stds, color="skyblue", ecolor="gray")
+plt.xlabel("Explained Attention Score (mean ± std)")
+plt.title("Component Ablation Effect on Head 1.5")
+plt.tight_layout()
+plt.show()
 
 # %% [markdown]
 # ## Comment:
