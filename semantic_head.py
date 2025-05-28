@@ -199,8 +199,11 @@ def explained_attn_score(
     explained_prob = (gt_attn * pred_attn).sum(dim=-1) # b n s
     unexplained_prob = (gt_attn * (1 - pred_attn)).sum(dim=-1) # b n s
     
-    entropy = - explained_prob.log() - (1 - unexplained_prob).log()
-    print(entropy.shape)
+    assert torch.all(explained_prob <= 1 + 1e-5) and torch.all(unexplained_prob <= 1 + 1e-5), f"Probs must be less than 1. Explained: {explained_prob.max().item()}, Unexplained: {unexplained_prob.max().item()} "
+    
+    assert torch.allclose(explained_prob + unexplained_prob, torch.ones_like(explained_prob))
+    
+    entropy = - explained_prob.log() # - (1 - unexplained_prob).log()
     return entropy.sum(dim=-1)
 
 plt.plot(explained_attn_score(gt_attn.unsqueeze(0), attn)[0].numpy(force=True)
