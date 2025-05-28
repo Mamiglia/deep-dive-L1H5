@@ -5,7 +5,7 @@ from jaxtyping import Float, Int
 import numpy as np
 from transformer_lens.components import MLP, Embed, LayerNorm, Unembed
 from transformer_lens.hook_points import HookPoint
-
+import random
 from transformer_lens import (
     ActivationCache,
     FactoredMatrix,
@@ -104,13 +104,15 @@ def topk_feats(
 
 from itertools import chain
 
-def random_toks_with_keywords(model, keywords=None, seq_len=20):
+def random_toks_with_keywords(model, keywords : str | list[str], seq_len=20):
     """
     Generate a random sequence of tokens, inserting specific keywords at random positions.
     Returns:
         text (str): The generated text.
         kw_idx (list): List of positions where keywords were inserted.
-    """    
+    """
+    if isinstance(keywords, str):
+        keywords = KEYWORDS[keywords]
     random.shuffle(keywords)
     kw_toks = model.tokenizer([" " + kw for kw in keywords]).input_ids
     kw_toks = list(chain(*kw_toks))
@@ -154,7 +156,6 @@ def precision(a, b, pos_idx):
         gt_feat = set(b[i].tolist())
         intersection[i] += len(pred_feat & gt_feat)
         
-    print(intersection)
     tp = sum(intersection[pos_idx])
     fp = sum(intersection[neg_idx])
     if tp + fp == 0:
