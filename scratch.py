@@ -56,27 +56,9 @@ for layer in [LAYER]:
 
 
 # %%
-text = "The cat saw a dog. The man looks at the door. the mouse noticed the elephant"
-vocab = list(model.tokenizer.get_vocab().keys())
-random_tokens = [random.choice(vocab) for _ in range(20)]
+text, _ = random_toks_with_keywords(model, "colors")
 
-# Replace GPT2's whitespace special char 'Ġ' with a space for readability
-def decode_gpt2_token(token):
-    return token.replace("Ġ", " ")
-
-text = " ".join([decode_gpt2_token(tok) for tok in random_tokens])
-print("Random text:", text)
-
-# Insert "red", "green", "blue" at random positions in the random_tokens list
-color_words = ["red", "green", "blue"]
-color_words = ["cat", "dog", "mouse"]
-for color in color_words:
-    idx = random.randint(0, len(random_tokens))
-    random_tokens.insert(idx, color)
-text = " ".join([decode_gpt2_token(tok) for tok in random_tokens])
-# remove double space:
-text = text.replace("  ", " ")
-print("Random text with colors:", text)
+text
 
 # %%
 logits, cache = model.run_with_cache(text, remove_batch_dim=True)
@@ -111,19 +93,19 @@ print(feats[-4][torch.argsort(feats[-2], descending=True)[:8]])
 resid = cache[HOOK_POINT]
 feat_attn = token2feat_attn(resid, sae, W_KQ, sae_encoder=False)
 
-dest_feat_idx, _ = topk_feats(feat_attn.AB.T,12)
+dest_feat_idx, _ = topk_feats(feat_attn,12)
 
 # %%
-for i in range(8):
-    display_dashboard(latent_idx=dest_feat_idx[-2][i], sae_id = HOOK_POINT)
+for i in range(1):
+    display_dashboard(latent_idx=dest_feat_idx[-1][i], sae_id = HOOK_POINT)
 
 # %%
 resid = cache[HOOK_POINT]
 resid = F.layer_norm(resid, (d_model, ))
 src_feats = sae.encode(resid)
 src_feat_idx, _ = topk_feats(src_feats,12)
-for i in range(8):
-    display_dashboard(latent_idx=src_feat_idx[-4][i], sae_id = HOOK_POINT)
+for i in range(1):
+    display_dashboard(latent_idx=src_feat_idx[-1][i], sae_id = HOOK_POINT)
 # %%
 resid = cache[HOOK_POINT]
 resid = F.layer_norm(resid, (d_model, ))
@@ -140,7 +122,7 @@ for t in range(len(str_tokens)):
     dest_token = resid[dest_t]
     dest_feat_idx, _ = topk_feats(feats[dest_t], 32)
     
-    pred_dest_feat = token2feat_attn(resid, sae, W_KQ, sae_encoder=False).AB.T[t]
+    pred_dest_feat = token2feat_attn(resid, sae, W_KQ, sae_encoder=False)[t]
     pred_dest_feat_idx, _ = topk_feats(pred_dest_feat, 32)
     
     # union size: number of indices both in pred_dest_feat_idx and dest_feat_idx
@@ -152,6 +134,136 @@ for t in range(len(str_tokens)):
 
 # Tested whether tokens attend to expected features. 
 # Confirmed that animal tokens attend positively at feature #9270 
-# Colours respond positively at features #21000, #22330, #21055
+# Colours respond positively at features #9975, #22330, #21055
 
+# %% [markdown]
+# # Feature imporance
+# I want to understand if a feature is considered important for a specific head
+# I can do so by checking the norm 
+# %%
+import matplotlib.pyplot as plt
+
+num_layers = model.cfg.n_layers
+num_heads = model.cfg.n_heads
+
+all_norms = []
+for layer in range(1,12):
+    for head in range(num_heads):
+        HOOK_POINT = f"blocks.{layer-1}.hook_resid_post"
+        model, sae, d_sae, d_model = load_model_sae(sae_id=HOOK_POINT)
+        W_KQ = get_kq(model, layer=layer+1, head_idx=head)
+        features = sae.W_dec
+        features = features / features.norm(dim=-1, keepdim=True)
+        assert torch.allclose(features.norm(dim=-1), torch.ones(features.shape[0], device=device))
+        keys = W_KQ @ features.T
+        keys = keys.AB
+        norms = keys.norm(dim=0).tolist()
+        all_norms.append({
+            "layer": layer,
+            "head": head,
+            "norms": norms
+        })
+        # Optionally plot or print stats per head/layer
+        plt.hist(norms, bins=20)
+        plt.title(f"Layer {layer+1} Head {head}")
+        plt.show()
+        # print(f"Layer {layer+1} Head {head}: {torch.sum(keys.norm(dim=0) > 0.6).item()} features with norm > 0.6")
+        print(topk_feats(keys.norm(dim=0)))
+
+# %%
+
+def pred_accuracy(model : HookedTransformer, sae: SAE, layer: int, head_idx: int, k=32, kw = None):
+    """For each token compute the expected features and the predicted ones and measure the difference."""
+    if kw is None:
+        kw = random.choice(list(KEYWORDS.keys()))
+        print(kw) 
+    text, kw_idx = random_toks_with_keywords(model, keywords=kw, seq_len = 20)
+        
+    _, cache = model.run_with_cache(text, remove_batch_dim=True)
+    W_KQ = get_kq(model, layer=layer, head_idx=head_idx)
+
+    seq_len = text.shape[-1]
+    
+    hook_point = f"blocks.{layer-1}.hook_resid_post"
+
+    
+    resid = cache[hook_point]
+    resid = F.layer_norm(resid, (d_model, ))
+    feats = sae.encode(resid)
+    # seq features
+    feat_idx, _ = topk_feats(feats, k)
+    
+    most_attended_token = torch.argmax(cache["pattern", layer][head_idx], dim=-1)
+    assert torch.all(most_attended_token <= torch.arange(0,seq_len, device=device)), "Cannot attend to future tokens"
+    
+    gt_feat_idx = feat_idx[most_attended_token] # seq k
+
+    assert gt_feat_idx.shape == (seq_len, k)
+
+
+    feat_attn = token2feat_attn(resid, sae, W_KQ)
+    pred_feat_idx, _ = topk_feats(feat_attn, k)
+
+    
+    return precision(pred_feat_idx, gt_feat_idx, kw_idx[1:])
+
+
+KEYWORDS = {
+    "colors": ["blue", "red", "green","green", " green", "yellow", "purple"],
+    "animals": ["dog", "cat", "mouse", "horse", "sheep"],
+    "fruits": ["apple", "banana", "grape", "peach", "lemon"],
+    "emotions": ["happy", "sad", "angry", "scared", "proud"],
+    "weather": ["rain", "snow", "wind", "storm", "sun"],
+}
+
+# LAYER = 1
+# HEAD_IDX= 5
+# HOOK_POINT = f"blocks.{LAYER-1}.hook_resid_post"
+# model, sae, d_sae, d_model = load_model_sae(sae_id=HOOK_POINT)
+pred_accuracy(model, sae, LAYER, HEAD_IDX)
+# %%
+
+num_layers = model.cfg.n_layers
+num_heads = model.cfg.n_heads
+
+REPEATS = 64
+
+records = []
+
+for layer in range(1,12):
+    hook_point = f"blocks.{layer-1}.hook_resid_post"
+    model, sae, d_sae, d_model = load_model_sae(sae_id=hook_point)
+    for head in tqdm(range(num_heads)):
+        
+        for category in KEYWORDS.keys():
+            for repeat in range(REPEATS):
+                p = pred_accuracy(model, sae, layer, head, kw=category)
+                
+                records.append({
+                    'layer': layer,
+                    'head_idx': head,
+                    'category': category,
+                    'rep': repeat,
+                    'precision': p
+                })
+# %%
+from tqdm import tqdm
+import pandas as pd
+# %%
+df = pd.DataFrame.from_records(records)
+
+import seaborn as sns
+
+for category in KEYWORDS.keys():
+    p = np.zeros((num_layers, num_heads))
+    for l in range(1, num_layers):
+        for h in range(num_heads):
+            mask = (df.layer == l) & (df.head_idx == h) & (df.category == category)
+            p[l, h] = df[mask].precision.mean()
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(p, annot=True)
+    plt.title(f"Precision Heatmap for Category: {category}")
+    plt.xlabel("Head")
+    plt.ylabel("Layer")
+    plt.show()
 # %%
