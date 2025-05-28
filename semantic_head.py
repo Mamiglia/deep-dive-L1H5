@@ -182,7 +182,7 @@ def explained_attn_score(
     pred_attn: Float[Tensor, "*batch seq seq"]
 ) -> Float[Tensor, "*batch n_head"]:
     """
-    Computes the ratio of explained to unexplained attention for each head and position.
+    Computes the negative log cumulative probability of assigning the attention to the expected pattern. 
 
     Args:
         gt_attn (Tensor): Ground truth attention patterns of shape (..., n_head, seq, seq),
@@ -194,17 +194,14 @@ def explained_attn_score(
         Tensor: The explained/unexplained attention ratio of shape (..., n_head, seq).
     """
     assert gt_attn.shape[-2:] == pred_attn.shape[-2:], f"{gt_attn.shape=}, {pred_attn.shape=}"
+    
     if gt_attn.ndim == 4 and pred_attn.ndim ==3:
         pred_attn = pred_attn.unsqueeze(-3)
-    explained_prob = (gt_attn * pred_attn).sum(dim=-1) # b n s
-    unexplained_prob = (gt_attn * (1 - pred_attn)).sum(dim=-1) # b n s
-    
-    assert torch.all(explained_prob <= 1 + 1e-5) and torch.all(unexplained_prob <= 1 + 1e-5), f"Probs must be less than 1. Explained: {explained_prob.max().item()}, Unexplained: {unexplained_prob.max().item()} "
-    
-    assert torch.allclose(explained_prob + unexplained_prob, torch.ones_like(explained_prob))
-    
-    entropy = - explained_prob.log() # - (1 - unexplained_prob).log()
-    return entropy.sum(dim=-1)
+        
+    prob_q = (gt_attn * pred_attn).sum(dim=-1) # b n s
+
+    surprise = - prob_q.log()
+    return surprise.sum(dim=-1)
 
 plt.plot(explained_attn_score(gt_attn.unsqueeze(0), attn)[0].numpy(force=True)
 )
