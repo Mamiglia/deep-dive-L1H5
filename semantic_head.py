@@ -1,4 +1,5 @@
 # %%
+from typing import Callable
 from matplotlib import pyplot as plt
 import torch
 import numpy as np
@@ -221,10 +222,11 @@ def explained_attn_score_metric(
     cache: ActivationCache,
     pred_attn
 ):
-    attn = cache["pattern", LAYER]
+    attn = cache["blocks.1.attn.hook_pattern"]
     score = explained_attn_score(attn, pred_attn)
     return score[...,HEAD_IDX]
 
+import torch.nn as nn
 
 @torch.inference_mode()
 def ablate_metric(
@@ -244,17 +246,37 @@ def ablate_metric(
         'hook_pos_embed',
         'blocks.0.hook_attn_out',
         'blocks.0.hook_mlp_out',
+        'blocks.0.hook_mlp_resid',
         'blocks.2.hook_mlp_out',
         'None'
     ]
     results = dict()
+    out_hook = "blocks.1.attn.hook_pattern"
+    
+    # Hook function to cache activations
+    def cache_hook(activation, hook):
+        cache[hook.name] = activation
 
     for component in tqdm(components):
         model.reset_hooks()
-        if component != 'None':
-            model.add_hook(component, ablate_component, level=1)
-        _, cache = model.run_with_cache(batch,
-            names_filter="blocks.1.attn.hook_pattern")
+        cache = dict()
+        
+        hooks : list[tuple[str,Callable]] = [(out_hook, cache_hook)]
+        
+        match component:
+            case 'None':
+                pass
+            case 'blocks.0.hook_mlp_resid':
+                replace_hk = lambda x,hook: cache['blocks.0.hook_mlp_out']
+                hooks += [
+                    ('blocks.0.hook_mlp_out', cache_hook),
+                    ('blocks.0.hook_resid_post', replace_hk)
+                ]
+            case _:
+                hooks.append((component, ablate_component))
+            
+        model.run_with_hooks(batch,
+            fwd_hooks=hooks)
         
         res = metric(cache)
         results[component] = (res.mean().item(), res.std().item())
