@@ -15,6 +15,19 @@ from IPython.display import HTML, IFrame, clear_output, display
 import torch.nn.functional as F
 import random
 
+import seaborn as sns
+
+def barplot(values, **set_args):
+    plt.figure(figsize=(16,8))
+    ax = sns.barplot(values.numpy(force=True))
+    ax.set_xticks([])  # Remove x-axis ticks
+    if set_args:
+        ax.set(**set_args)
+    for i, v in enumerate(values.cpu().numpy()):
+        ax.text(i, v * 1.1,  str(i), ha='center', va='bottom', fontsize=10)
+    return ax
+
+
 from jaxtyping import Float, Int
 import circuitsvis as cv
 
@@ -28,6 +41,7 @@ LAYER = 1
 HEAD_IDX= 5
 HOOK_POINT = f"blocks.{LAYER-1}.hook_resid_post"
 model = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
+
 
 #%%
 VOCAB_SIZE = model.tokenizer.vocab_size
@@ -153,5 +167,52 @@ get_most_attended_tokens(' if', attn)
 
 # %%
 get_most_attended_tokens(' Italy', attn)
+
+# %%
+pairwise_sim = F.cosine_similarity(W_K, W_Q, dim=0)
+
+barplot(pairwise_sim, ylabel='cos(θ)', title='Similarity between W_K and W_Q rows')
+# %%
+del pairwise_sim, model
+torch.cuda.empty_cache()
+# %%
+D_HEAD = 64
+q = attn_in @ W_Q
+
+diff = torch.zeros(D_HEAD)
+diag_diff = torch.zeros(D_HEAD)
+all_but_diag = torch.zeros(D_HEAD)
+
+for i in range(D_HEAD):
+    wk = W_K.clone()
+    wk[:, i] = 0
+    
+    k_abl = attn_in @ wk
+    attn_ablated = FactoredMatrix(q, k_abl.T).AB
+    attn_ablated /= attn_ablated.sum(dim=-1)
+    d = (attn_ablated - attn / attn.sum(dim=-1))#.abs()
+    diff[i] = d.mean()
+    diag_diff[i] = torch.diagonal(d).mean()
+    d.fill_diagonal_(0.)
+    all_but_diag[i] = d.mean()
+    
+    del attn_ablated, d, k_abl, wk
+    
+# %%
+barplot(diff, title="Difference when ablating a specific row", ylabel='Inre ')
+# %%
+barplot(all_but_diag, title="Difference when ablating a specific row", ylabel='difference in every element but diagonal')
+# %%
+barplot(diag_diff, title="Increase in self-attention when ablating a specific row", ylabel='diagonal difference')
+# %%
+
+wk = W_K.clone()
+# wk[:, [21,51,32,39,37,24]] = 0
+wk[:,:40] = 0
+k_abl = attn_in @ wk
+attn_ablated = FactoredMatrix(q, k_abl.T).AB
+# attn_ablated /= attn_ablated.sum(dim=-1)
+
+get_most_attended_tokens('Monday', attn_ablated)
 
 # %%
