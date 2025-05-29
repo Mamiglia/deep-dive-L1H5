@@ -71,6 +71,8 @@ def vocab_attn(
     ]
     # This dict will store the cached activations
     activation_cache = {}
+    
+    out_hook = 'blocks.1.ln1.hook_normalized' # 'hook_embed'# 
 
     # Hook function to cache activations
     def cache_hook(activation, hook):
@@ -82,8 +84,8 @@ def vocab_attn(
         # ("blocks.1.attn.hook_q", cache_hook),
         # ("blocks.1.attn.hook_k", cache_hook),
         ('blocks.0.ln1.hook_normalized', ablate_reduce_component),
-        ('blocks.1.ln1.hook_normalized', cache_hook),  
-        ('blocks.1.ln1.hook_normalized', stop_computation),  
+        (out_hook, cache_hook),  
+        (out_hook, stop_computation),  
     ]
     for component in ablate_components:
         hooks.append((component, ablate_component))
@@ -95,7 +97,7 @@ def vocab_attn(
         print(e)
 
     model.reset_hooks()
-    return activation_cache['blocks.1.ln1.hook_normalized'][0,:]
+    return activation_cache[out_hook][0,:]
 
 
 attn_in = vocab_attn(model)
@@ -104,8 +106,11 @@ attn_in = vocab_attn(model)
 W_Q = model.blocks[1].attn.W_Q[5].clone().detach()
 W_K = model.blocks[1].attn.W_K[5].clone().detach()
 
+# Resid similarity 
+# q = F.layer_norm(attn_in, (768,)) #@ W_Q
+# k = F.layer_norm(attn_in, (768,)) #@ W_K
 
-
+# QK similarity
 q = attn_in @ W_Q
 k = attn_in @ W_K
 
