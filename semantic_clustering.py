@@ -64,8 +64,6 @@ def ablate_reduce_component(
 def stop_computation(t, hook):
     raise StopIteration(f"Stopping model mid-execution at {hook.name}")
 
-
-
 @torch.inference_mode()
 def vocab_attn(
     model: HookedTransformer,
@@ -82,6 +80,7 @@ def vocab_attn(
     ablate_components = [
         'hook_pos_embed',
         'blocks.0.hook_attn_out',
+        # 'blocks.0.hook_mlp_out',
     ]
     # This dict will store the cached activations
     activation_cache = {}
@@ -92,12 +91,17 @@ def vocab_attn(
     def cache_hook(activation, hook):
         activation_cache[hook.name] = activation
         
+    def replace_hook(activation, hook):
+        return activation_cache['blocks.0.hook_mlp_out']
+        
     model.cfg.use_attn_in = False
         
     hooks = [
         # ("blocks.1.attn.hook_q", cache_hook),
         # ("blocks.1.attn.hook_k", cache_hook),
         ('blocks.0.ln1.hook_normalized', ablate_reduce_component),
+        ('blocks.0.hook_mlp_out', cache_hook),
+        ('blocks.0.hook_resid_post', replace_hook ),
         (out_hook, cache_hook),  
         (out_hook, stop_computation),  
     ]
