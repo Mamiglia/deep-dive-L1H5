@@ -173,11 +173,15 @@ get_most_attended_tokens(' if', attn)
 get_most_attended_tokens(' Italy', attn)
 
 # %%
-pairwise_sim = F.cosine_similarity(W_K, W_Q, dim=0)
+get_most_attended_tokens(' </', attn)
 
-barplot(pairwise_sim, ylabel='cos(θ)', title='Similarity between W_K and W_Q rows')
 # %%
-del pairwise_sim, model
+pairwise_sim = (W_Q.T @ W_K)
+
+barplot(torch.diagonal(pairwise_sim), ylabel='cos(θ)', title='Similarity between W_K and W_Q rows')
+
+# %%
+del pairwise_sim
 torch.cuda.empty_cache()
 # %%
 D_HEAD = 64
@@ -210,13 +214,174 @@ barplot(all_but_diag, title="Difference when ablating a specific row", ylabel='d
 barplot(diag_diff, title="Increase in self-attention when ablating a specific row", ylabel='diagonal difference')
 # %%
 
-wk = W_K.clone()
+group_tokens = [
+    ' red',
+    ' Green',
+    ' Blue', 
+    'blue', 
+    'orange', 
+    ' brown', 
+    ' 49', 
+    ' 52', 
+    ' 56', 
+    ' 68', 
+    ' 69',  # numbers
+    ' 82', 
+    'Monday', # week days
+    'Friday', 
+    ' weekend', 
+    'Week', 
+    'Wednesday', 
+    ' yesterday', 
+    ' John',  # names
+    ' Richard',
+    ' Liam', 
+    ' Anne', 
+    ' Sophie',
+    ' Sarah',
+    ' Italy', # countries
+    ' Iceland', 
+    ' Austria',
+    ' Mexico',
+    ' Spain', 
+    ' France' 
+]
+
+group_toks=model.tokenizer(group_tokens).input_ids
+group_toks = list(chain(*group_toks))
+
+sns.heatmap(attn[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens,
+    vmin=0,
+)
+# %%
+W_QK = W_Q @ W_K.T
+
+wqk = W_QK.clone()
+for i in range(10):
+    wqk[torch.arange(768), torch.arange(768)] += 0.1
+    a =  attn_in @ wqk @ attn_in.T
+    print(get_most_attended_tokens(' red',a)[0])
+# %%
+
+
+def random_skew_symmetric_W(D, device = device):
+    """Generate a full-rank skew-symmetric matrix W ∈ ℝ^{D×D} (D must be even)."""
+    assert D % 2 == 0, "D must be even to get full-rank skew-symmetric matrix."
+    X = torch.randn(D, D, device = device)
+    W = X - X.T
+    return W
+
+
+not_self_a =  attn_in @ random_skew_symmetric_W(768) @ attn_in.T
+sns.heatmap(not_self_a[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens,
+)
+del not_self_a
+
+
+
+# %%
+def random_skew_factors(D, r, k=None, device=device):
+    """
+    Generate A, B ∈ ℝ^{D×2r} such that A @ B.T is skew-symmetric of rank ≤ 2r.
+    """
+    r = r // 2
+    if k is None:
+        k = r
+    X = torch.randn(D, r, device=device)
+    Y = torch.randn(D, r, device=device)
+    A = torch.cat([X, Y, torch.randn(D,k, device=device)], dim=1)
+    B = torch.cat([Y,-X, torch.randn(D,k, device=device)], dim=1)
+    # permute columns of both A,B:
+    perm = torch.randperm(2 * r + k)
+    print(perm)
+    A = A[:, perm]
+    B = B[:, perm]
+    return A, B
+
+
+A, B = random_skew_factors(768, 64)
+
+W_not_self_approx = A @ B.T
+not_self_a =  attn_in @ W_not_self_approx @ attn_in.T
+sns.heatmap(not_self_a[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens,
+)
+# %%
+W = random_skew_symmetric_W(64).numpy(force=True)
+A, B = random_skew_factors(64, 8)
+W = (A @ B.T).numpy(force=True)
+
+
+sns.heatmap(W @ W)
+# %%
+W_QK = (W_Q @ W_K.T).cpu()
+W_QK_L = W_QK[:32,:32]
+
+sns.heatmap(
+    (W_QK_L @ W_QK_L).numpy(force=True)
+)
+# %%
+A, B = random_skew_factors(6, 4)
+W = (A @ B.T).numpy(force=True)
+s = (W @ W)
+# s = (W_QK @ W_QK)
+m = np.diagonal(s) <= s.min(axis=0)
+
+m.sum()
+# %%
+H, D = 64, 20
+# A, B = random_skew_factors(H,D, device='cpu')
+# print(A.shape)
+W_Q = model.blocks[1].attn.W_Q[5].clone().detach()
+W_K = model.blocks[1].attn.W_K[5].clone().detach()
+A, B = W_K, W_Q
+A_n = A / A.norm(dim=0, keepdim=True)
+B_n = B / B.norm(dim=0, keepdim=True)
+A_n, B_n = A_n.numpy(force=True), B_n.numpy(force=True)
+# sns.heatmap(A.T @ B)
+# plt.show()
+M = A_n.T @ B_n
+# sns.heatmap(M - M.T)
+m = np.argsort(np.abs((M - M.T)).max(axis=0))[::-1]
+sns.heatmap(np.abs(M- M.T))
+plt.show()
+print(m)
+W = A @ B.T
+maxval, minval = (W@W).max(), (W@W).min()
+
+W = (A @ B.T).numpy(force=True)
+sns.heatmap((W@W)[:128,:128], vmin=minval, vmax=maxval)
+
+for i in m[:32]:
+    # j = m[i]
+    A[:,i] *= 10
+
+plt.show()
+# A_n = A / A.norm(dim=0, keepdim=True)
+# B_n = B / B.norm(dim=0, keepdim=True)
+# A_n, B_n = A_n.numpy(force=True), B_n.numpy(force=True)
+W = (A @ B.T).numpy(force=True)
+sns.heatmap((W@W)[:128,:128], vmin=minval, vmax=maxval)
+
+plt.show()
+torch.cuda.empty_cache()
+# wk = W_K.clone()
 # wk[:, [21,51,32,39,37,24]] = 0
-wk[:,:40] = 0
-k_abl = attn_in @ wk
-attn_ablated = FactoredMatrix(q, k_abl.T).AB
-# attn_ablated /= attn_ablated.sum(dim=-1)
+# wk[:,[2,17,19,20,36,54,4,29]] *= 0
+# wk[min_diag] *= 2
+# wk[min_diag] = W_Q[min_diag]
+# wk[:,diag<0]
+k_abl = attn_in @ B
+q = attn_in @ A
+attn_ablated = q@ k_abl.T
 
-get_most_attended_tokens('Monday', attn_ablated)
-
+sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens,
+    vmin=0,)
 # %%
