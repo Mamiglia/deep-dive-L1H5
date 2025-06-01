@@ -27,7 +27,7 @@ def barplot(values, **set_args):
         ax.text(i, v * 1.1,  str(i), ha='center', va='bottom', fontsize=10)
     return ax
 
-
+from transformers import PreTrainedTokenizerBase
 from jaxtyping import Float, Int
 import circuitsvis as cv
 
@@ -136,8 +136,15 @@ k = attn_in @ W_K
 attn = FactoredMatrix(k,q.T).AB
 
 attn.shape
+# %% [markdown]
+# Plot first 32 items of the whole attention matrix. 
+
+# **Observation**: All the digits are clustered together, each digits attend strongly to its successor, normal to other digits, low on itself, very low on all other tokens
+
 # %%
 import seaborn as sns
+from rich.table import Table
+from rich.console import Console
 L=32
 sns.heatmap(attn[:L, :L].numpy(force=True),
     xticklabels=model.tokenizer.batch_decode(torch.arange(L)),
@@ -145,7 +152,7 @@ sns.heatmap(attn[:L, :L].numpy(force=True),
 )
 # %%
 
-def get_most_attended_tokens(token:str, attn:Tensor, k=16, tokenizer=model.tokenizer):
+def get_most_attended_tokens(token:str, attn:Tensor, k=16, tokenizer: PreTrainedTokenizerBase=model.tokenizer):
     tok_idx = tokenizer(token).input_ids
     
     assert len(tok_idx) == 1, f'Can only handle one token at a time. Currently {tok_idx}'
@@ -155,64 +162,38 @@ def get_most_attended_tokens(token:str, attn:Tensor, k=16, tokenizer=model.token
     max_val, max_idx = torch.topk(scores, k, largest=True, sorted=True)
     return tokenizer.batch_decode(max_idx), max_val
     
+tokens = [
+    ' red',
+    ' 69',
+    'Monday',
+    ' John',
+    ' +',
+    ' if',
+    ' Italy',
+    # ' </'
+]
 
-get_most_attended_tokens(' red', attn)
-# %%
-get_most_attended_tokens(' 69', attn)
+table = Table(title="Most Attended Tokens")
+table.add_column("Input Token", style="bold")
+table.add_column("Top Attended Tokens", style="dim")
+# table.add_column("Scores", style="dim")
 
-# %%
-get_most_attended_tokens('Monday', attn)
-# %%
-get_most_attended_tokens(' John', attn)
-# %%
-get_most_attended_tokens(' +', attn)
-# %%
-get_most_attended_tokens(' if', attn)
+for token in tokens:
+    top_tokens, scores = get_most_attended_tokens(token, attn, k=10)
+    table.add_row(
+        repr(token),
+        ", ".join(top_tokens),
+        # ", ".join([f"{s.item():.3f}" for s in scores])
+    )
 
-# %%
-get_most_attended_tokens(' Italy', attn)
-
-# %%
-get_most_attended_tokens(' </', attn)
+table
 
 # %%
 pairwise_sim = (W_Q.T @ W_K)
 
 barplot(torch.diagonal(pairwise_sim), ylabel='cos(θ)', title='Similarity between W_K and W_Q rows')
-
 # %%
-del pairwise_sim
 torch.cuda.empty_cache()
-# %%
-D_HEAD = 64
-q = attn_in @ W_Q
-
-diff = torch.zeros(D_HEAD)
-diag_diff = torch.zeros(D_HEAD)
-all_but_diag = torch.zeros(D_HEAD)
-
-for i in range(D_HEAD):
-    wk = W_K.clone()
-    wk[:, i] = 0
-    
-    k_abl = attn_in @ wk
-    attn_ablated = FactoredMatrix(q, k_abl.T).AB
-    attn_ablated /= attn_ablated.sum(dim=-1)
-    d = (attn_ablated - attn / attn.sum(dim=-1))#.abs()
-    diff[i] = d.mean()
-    diag_diff[i] = torch.diagonal(d).mean()
-    d.fill_diagonal_(0.)
-    all_but_diag[i] = d.mean()
-    
-    del attn_ablated, d, k_abl, wk
-    
-# %%
-barplot(diff, title="Difference when ablating a specific row", ylabel='Inre ')
-# %%
-barplot(all_but_diag, title="Difference when ablating a specific row", ylabel='difference in every element but diagonal')
-# %%
-barplot(diag_diff, title="Increase in self-attention when ablating a specific row", ylabel='diagonal difference')
-# %%
 
 group_tokens = [
     ' red',
@@ -384,4 +365,39 @@ sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
     xticklabels=group_tokens,
     yticklabels = group_tokens,
     vmin=0,)
+# %% [markdown]
+
+# # Exp: Column ablation
 # %%
+D_HEAD = 64
+q = attn_in @ W_Q
+
+diff = torch.zeros(D_HEAD)
+diag_diff = torch.zeros(D_HEAD)
+all_but_diag = torch.zeros(D_HEAD)
+
+for i in range(D_HEAD):
+    wk = W_K.clone()
+    wk[:, i] = 0
+    
+    k_abl = attn_in @ wk
+    attn_ablated = FactoredMatrix(q, k_abl.T).AB
+    attn_ablated /= attn_ablated.sum(dim=-1)
+    d = (attn_ablated - attn / attn.sum(dim=-1))#.abs()
+    diff[i] = d.mean()
+    diag_diff[i] = torch.diagonal(d).mean()
+    d.fill_diagonal_(0.)
+    all_but_diag[i] = d.mean()
+    
+    del attn_ablated, d, k_abl, wk
+    
+# %%
+barplot(diff, title="Difference when ablating a specific row", ylabel='Inre ')
+# %%
+barplot(all_but_diag, title="Difference when ablating a specific row", ylabel='difference in every element but diagonal')
+# %%
+barplot(diag_diff, title="Increase in self-attention when ablating a specific row", ylabel='diagonal difference')
+# %%
+
+
+
