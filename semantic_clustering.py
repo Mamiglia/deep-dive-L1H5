@@ -288,27 +288,27 @@ wq =  W_Q.clone().to('cuda:1').detach()
 attn_in = attn_in.to('cuda:1')
 
 wk -= W_K.grad.to('cuda:1')
-wq -= W_Q.grad.to('cuda:1')
+# wq -= W_Q.grad.to('cuda:1')
 attn_ablated = attn_in @ wq @ wk.T @ attn_in.T 
 
 sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
     xticklabels=group_tokens,
     yticklabels = group_tokens,
-    # vmin=0, 
+    vmin=0, 
     # vmax=180    
 )
 
 print(display_most_attended_tokens(tokens, attn_ablated, k=10))
 # %% [markdown]
-# **Observation**: I can succesfully boost the self-attention by removing the gradient of the "bilinear" loss. 
+# **Observation**: I can succesfully boost the self-attention by subtratcting the gradient of the "bilinear" loss. 
 # %%
 # Now elicit
 wk =  W_K.clone().to('cuda:1').detach()
 wq =  W_Q.clone().to('cuda:1').detach()
 attn_in = attn_in.to('cuda:1')
 
-wk += W_K.grad.to('cuda:1') * 0
-wq += W_Q.grad.to('cuda:1') * 0
+wk += W_K.grad.to('cuda:1') * 0.1
+wq += W_Q.grad.to('cuda:1') * 0.1
 attn_ablated = attn_in @ wq @ wk.T @ attn_in.T 
 
 sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
