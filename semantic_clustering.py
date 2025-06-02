@@ -322,6 +322,59 @@ torch.cuda.empty_cache()
 
 # %% [markdown]
 # **Observation**: When adding it instead it elicits the self-suppression, but I have to downscale it to avoid introducing too much noise, otherwise it also stops attending similar tokens as well
+
+# ### SVD decomposition:
+# %%
+W_Q = model.blocks[1].attn.W_Q[5].clone().detach().to(device)
+W_K = model.blocks[1].attn.W_K[5].clone().detach().to(device)
+U_Q, S, U_K = torch.linalg.svd(W_Q @ W_K.T,)
+
+# Zero out noise components
+S = S[:64]
+U_Q = U_Q[:, :64]
+U_K = U_K[:64, :]
+
+
+print(torch.dist(W_Q @ W_K.T, U_Q @ torch.diag(S) @ U_K))
+
+attn_svd = attn_in @ U_Q @ torch.diag(S) @ U_K @ attn_in.T
+
+sns.heatmap(attn_svd[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens, vmin=0,
+)
+
+print(display_most_attended_tokens(tokens, attn_svd, k=10))
+
+# %%
+pairwise_sim = (U_Q.T @ U_K.T)
+barplot(torch.diagonal(pairwise_sim) * S)
+# %%
+# %%
+s = S.clone().detach()
+ablated = torch.diagonal(pairwise_sim) * S < -0.5
+s[ablated] *= -2
+attn_svd_abl = attn_in @ U_Q @ torch.diag(s) @ U_K @ attn_in.T
+
+sns.heatmap(attn_svd_abl[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens, vmin=0
+)
+
+display_most_attended_tokens(tokens, attn_svd_abl, k=10)
+# %% [markdown]
+# I'm somewhat able to boost the self-attention by manipulating the singular values.
+
+# %%
+
+# pairwise_sim = (U_Q @ U_K)
+# sns.histplot(pairwise_sim.diagonal().numpy(force=True), bins=25)
+
+# uq = U_Q.clone().detach()
+# uk = U_K.clone().detach()
+# uq[ablated] *= 10
+# uk[:,ablated] *= -10
+# attn_svd_abl = attn_in @ uq @ torch.diag(s) @ uk @ attn_in.T
 # %% [markdown]
 # Manually compute the similarity of each key and query item 
 # %%
