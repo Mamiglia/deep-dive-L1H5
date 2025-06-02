@@ -276,8 +276,11 @@ loss.backward()
 # importance_Q = grad_Q.mean(dim=0)  # [d_head]
 # importance_K = grad_K.mean(dim=0)
 # %%
-# barplot(importance_Q)
-barplot(W_Q.grad.mean(dim=0))
+# Barplot of row importance is almost flat
+barplot(W_Q.grad.pow(2).mean(dim=0))
+
+# plot histogram of gradient values: is basically a normal distribution
+sns.histplot(W_Q.grad.flatten().abs().cpu().numpy(), bins=50).set(yscale='log')
 
 # %%
 wk =  W_K.clone().to('cuda:1').detach()
