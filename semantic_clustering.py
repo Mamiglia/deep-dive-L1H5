@@ -366,6 +366,44 @@ display_most_attended_tokens(tokens, attn_svd_abl, k=10)
 # I'm somewhat able to boost the self-attention by manipulating the singular values.
 
 # %%
+def rank(attn: Float[Tensor, "seq seq"]) -> tuple[Int[Tensor, "seq"], Int[Tensor, "seq seq"]]:
+    """Returns the rank of the diagonal element among all the other elements of the attention matrix"""
+    sorted_attn = attn.argsort(dim=-1, descending=False)
+    
+    rank = sorted_attn.diagonal()
+    
+    return rank, sorted_attn
+
+def mrr(rank: Int[Tensor, "seq"]) -> float:
+    """Computes the Mean Reciprocal Rank given the rank of the diagonal elements"""
+    return (1 / (rank + 1)).mean().item()
+
+def accuracy_k(rank: Int[Tensor, "seq"], k=32) -> float:
+    """Computes the accuracy at k given the rank of the diagonal elements"""
+    return (rank < k).float().mean().item()
+
+def spearman(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq seq"]) -> float:
+    """Computes the row-wise correlation coefficient between the predicted and ground truth ranks"""
+    # sequence length
+    seq_len = pred_sorted.size(-1)
+
+    # prepare rank matrices
+    device = pred_sorted.device
+    idx = torch.arange(seq_len, device=device).unsqueeze(0).expand(pred_sorted.size(0), -1)  # (seq, seq)
+    pred_ranks = torch.zeros_like(pred_sorted, dtype=torch.float, device=device)
+    gt_ranks   = torch.zeros_like(gt_sorted,   dtype=torch.float, device=device)
+    # scatter the rank positions
+    pred_ranks.scatter_(1, pred_sorted, idx)
+    gt_ranks.scatter_(1,   gt_sorted,   idx)
+    # compute squared differences of ranks
+    d2 = (pred_ranks - gt_ranks).pow(2).sum(dim=1)  # sum over each row
+    # spearman formula per row: ρ = 1 − (6 * Σd²) / [n(n²−1)]
+    n = seq_len
+    rho = 1 - (6 * d2) / (n * (n*n - 1))
+    # return mean over rows as Python float
+    return rho.mean().item()
+
+
 
 # pairwise_sim = (U_Q @ U_K)
 # sns.histplot(pairwise_sim.diagonal().numpy(force=True), bins=25)
