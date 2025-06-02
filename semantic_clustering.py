@@ -23,9 +23,21 @@ def barplot(values, **set_args):
     ax.set_xticks([])  # Remove x-axis ticks
     if set_args:
         ax.set(**set_args)
-    for i, v in enumerate(values.cpu().numpy()):
+    for i, v in enumerate(values.numpy(force=True)):
         ax.text(i, v * 1.1,  str(i), ha='center', va='bottom', fontsize=10)
     return ax
+
+def clean_mem():
+    import gc
+    
+    for var in ['loss', 'E']:
+        if var in locals():
+            del locals()[var]
+        elif var in globals():
+            del globals()[var]
+        
+    gc.collect()
+    torch.cuda.empty_cache()
 
 from transformers import PreTrainedTokenizerBase
 from jaxtyping import Float, Int
@@ -162,6 +174,20 @@ def get_most_attended_tokens(token:str, attn:Tensor, k=16, tokenizer: PreTrained
     max_val, max_idx = torch.topk(scores, k, largest=True, sorted=True)
     return tokenizer.batch_decode(max_idx), max_val
     
+def display_most_attended_tokens(tokens, attn, k=10, tokenizer=model.tokenizer):
+    table = Table(title="Most Attended Tokens")
+    table.add_column("Input Token", style="bold")
+    table.add_column("Top Attended Tokens", style="dim")
+    for token in tokens:
+        top_tokens, scores = get_most_attended_tokens(token, attn, k=k, tokenizer=tokenizer)
+        table.add_row(
+            repr(token),
+            ", ".join(top_tokens),
+        )
+    console = Console()
+    console.print(table)
+
+# Example usage:
 tokens = [
     ' red',
     ' 69',
@@ -172,21 +198,7 @@ tokens = [
     ' Italy',
     # ' </'
 ]
-
-table = Table(title="Most Attended Tokens")
-table.add_column("Input Token", style="bold")
-table.add_column("Top Attended Tokens", style="dim")
-# table.add_column("Scores", style="dim")
-
-for token in tokens:
-    top_tokens, scores = get_most_attended_tokens(token, attn, k=10)
-    table.add_row(
-        repr(token),
-        ", ".join(top_tokens),
-        # ", ".join([f"{s.item():.3f}" for s in scores])
-    )
-
-table
+display_most_attended_tokens(tokens, attn, k=10)
 
 # %%
 pairwise_sim = (W_Q.T @ W_K)
