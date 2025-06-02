@@ -248,15 +248,6 @@ sns.heatmap(attn[group_toks][:,group_toks].numpy(force=True),
     yticklabels = group_tokens,
     vmin=0,
 )
-# %%
-W_Q = model.blocks[1].attn.W_Q[5].clone().detach().to(device).requires_grad_(True)
-W_K = model.blocks[1].attn.W_K[5].clone().detach().to(device).requires_grad_(True)
-E = attn_in.detach().to(device)#    .requires_grad_(True)  # [n_tokens, d_model]
-# W_Q.grad[:] = 0
-# W_K.grad[:] = 0 
-# Q = E @ W_Q          # [n_tokens, d_head]
-# K = E @ W_K          # [n_tokens, d_head]
-# scores = E @ W_Q @ W_K.T @ E.T # [n_tokens, n_tokens]
 
 def selfloss(scores : Tensor):
     self_score = scores.diagonal()
@@ -266,6 +257,10 @@ def selfloss(scores : Tensor):
 def softloss(scores : Tensor):
     # computes the softmax
     return - torch.log(F.softmax(scores, dim=0).diagonal() + 1e-12).mean()  
+# %%
+W_Q = model.blocks[1].attn.W_Q[5].clone().detach().to(device).requires_grad_(True)
+W_K = model.blocks[1].attn.W_K[5].clone().detach().to(device).requires_grad_(True)
+E = attn_in.detach().to(device)#    .requires_grad_(True)  # [n_tokens, d_model]
 
 def bilinear_loss(W_QK: Tensor):
     return -W_QK.diagonal().sum()
@@ -315,9 +310,7 @@ attn_ablated = attn_in @ wq @ wk.T @ attn_in.T
 
 sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
     xticklabels=group_tokens,
-    yticklabels = group_tokens,
-    # vmin=0, 
-    # vmax=180    
+    yticklabels = group_tokens, vmin=0,
 )
 
 print(display_most_attended_tokens(tokens, attn_ablated, k=10))
