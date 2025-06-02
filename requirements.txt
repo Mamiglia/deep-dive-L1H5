@@ -1,0 +1,8 @@
+transformer_lens
+sae-lens
+circuitsvis
+torch
+seaborn
+scipy
+jaxtyping
+ipykernel

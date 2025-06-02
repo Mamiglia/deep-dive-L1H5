@@ -130,7 +130,7 @@ def vocab_attn(
     return activation_cache[out_hook][0,:]
 
 
-attn_in = vocab_attn(model)
+attn_in = vocab_attn(model).clone()
 
 # %%
 W_Q = model.blocks[1].attn.W_Q[5].clone().detach()
@@ -141,8 +141,8 @@ W_K = model.blocks[1].attn.W_K[5].clone().detach()
 # k = F.layer_norm(attn_in, (768,)) #@ W_K
 
 # QK similarity
-q = attn_in @ W_Q
-k = attn_in @ W_K
+# q = attn_in @ W_Q
+# k = attn_in @ W_K
 
 # %%
 attn = FactoredMatrix(k,q.T).AB
@@ -249,6 +249,104 @@ sns.heatmap(attn[group_toks][:,group_toks].numpy(force=True),
     vmin=0,
 )
 # %%
+W_Q = model.blocks[1].attn.W_Q[5].clone().detach().to(device).requires_grad_(True)
+W_K = model.blocks[1].attn.W_K[5].clone().detach().to(device).requires_grad_(True)
+E = attn_in.detach().to(device)#    .requires_grad_(True)  # [n_tokens, d_model]
+# W_Q.grad[:] = 0
+# W_K.grad[:] = 0 
+# Q = E @ W_Q          # [n_tokens, d_head]
+# K = E @ W_K          # [n_tokens, d_head]
+# scores = E @ W_Q @ W_K.T @ E.T # [n_tokens, n_tokens]
+
+def selfloss(scores : Tensor):
+    self_score = scores.diagonal()
+    total_score = scores.sum(dim=1)
+    return - (self_score / total_score).mean()
+
+def softloss(scores : Tensor):
+    # computes the softmax
+    return - torch.log(F.softmax(scores, dim=0).diagonal() + 1e-12).mean()  
+
+def bilinear_loss(W_QK: Tensor):
+    return -W_QK.diagonal().sum()
+
+# loss = selfloss(E @ W_Q @ W_K.T @ E.T)
+loss = bilinear_loss(W_Q @ W_K.T)
+W_Q.grad = None
+W_K.grad = None
+loss.backward()
+# grad_Q = E.grad @ W_Q       # ∂L/∂Q
+# grad_K = E.grad @ W_K       # ∂L/∂K
+
+# importance_Q = grad_Q.mean(dim=0)  # [d_head]
+# importance_K = grad_K.mean(dim=0)
+# %%
+# barplot(importance_Q)
+barplot(W_Q.grad.mean(dim=0))
+
+# %%
+wk =  W_K.clone().to('cuda:1').detach()
+wq =  W_Q.clone().to('cuda:1').detach()
+attn_in = attn_in.to('cuda:1')
+
+wk -= W_K.grad.to('cuda:1')
+wq -= W_Q.grad.to('cuda:1')
+attn_ablated = attn_in @ wq @ wk.T @ attn_in.T 
+
+sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens,
+    # vmin=0, 
+    # vmax=180    
+)
+
+print(display_most_attended_tokens(tokens, attn_ablated, k=10))
+# %% [markdown]
+# **Observation**: I can succesfully boost the self-attention by removing the gradient of the "bilinear" loss. 
+# %%
+# Now elicit
+wk =  W_K.clone().to('cuda:1').detach()
+wq =  W_Q.clone().to('cuda:1').detach()
+attn_in = attn_in.to('cuda:1')
+
+wk += W_K.grad.to('cuda:1') * 0
+wq += W_Q.grad.to('cuda:1') * 0
+attn_ablated = attn_in @ wq @ wk.T @ attn_in.T 
+
+sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
+    xticklabels=group_tokens,
+    yticklabels = group_tokens,
+    # vmin=0, 
+    # vmax=180    
+)
+
+print(display_most_attended_tokens(tokens, attn_ablated, k=10))
+del wk, wq, attn_ablated
+torch.cuda.empty_cache()
+
+# %% [markdown]
+# **Observation**: When adding it instead it elicits the self-suppression, but I have to downscale it to avoid introducing too much noise, otherwise it also stops attending similar tokens as well
+# %% [markdown]
+# Manually compute the similarity of each key and query item 
+# %%
+# E = attn_in.to('cuda:0')
+# Q = E @ W_Q
+# K = E @ W_K
+
+# S = Q*K
+
+# mu = S.mean(dim=0)
+# std = S.std(dim=0)
+
+# barplot(mu)
+# barplot(std)
+# del E, Q, K, S
+
+# %% [markdown]
+# test what happens when manually incrementing the diagonal W_QK
+# **observation**: After a manual increase of ~0.2 the head starts attending itself
+
+# %%
 W_QK = W_Q @ W_K.T
 
 wqk = W_QK.clone()
@@ -256,6 +354,8 @@ for i in range(10):
     wqk[torch.arange(768), torch.arange(768)] += 0.1
     a =  attn_in @ wqk @ attn_in.T
     print(get_most_attended_tokens(' red',a)[0])
+# %%
+
 # %%
 
 
