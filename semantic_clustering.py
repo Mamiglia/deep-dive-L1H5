@@ -481,7 +481,33 @@ df.to_csv("attention_records.csv", index=False)
 
 # pairwise_sim = (U_Q @ U_K)
 # sns.histplot(pairwise_sim.diagonal().numpy(force=True), bins=25)
+# %% 
+import matplotlib.pyplot as plt
 
+# List of columns to plot (excluding 'scale' and 'k')
+value_columns = df.columns.to_list()
+value_columns.remove('k')
+value_columns.remove("score")
+
+n_cols = 3
+n_rows = (len(value_columns) + n_cols - 1) // n_cols
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows), squeeze=False)
+
+for idx, col in enumerate(value_columns):
+    ax = axes[idx // n_cols][idx % n_cols]
+    pivot = df.pivot(index='scale', columns='k', values=col)
+    sns.heatmap(pivot, ax=ax, cmap='viridis')
+    ax.set_title(col)
+    ax.set_xlabel('k')
+    ax.set_ylabel('scale')
+
+# Hide any unused subplots
+for i in range(len(value_columns), n_rows * n_cols):
+    axes[i // n_cols][i % n_cols].axis('off')
+
+plt.tight_layout()
+plt.show()
 # uq = U_Q.clone().detach()
 # uk = U_K.clone().detach()
 # uq[ablated] *= 10
