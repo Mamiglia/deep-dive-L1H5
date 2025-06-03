@@ -364,14 +364,21 @@ sns.heatmap(attn_svd_abl[group_toks][:,group_toks].numpy(force=True),
 display_most_attended_tokens(tokens, attn_svd_abl, k=10)
 # %% [markdown]
 # I'm somewhat able to boost the self-attention by manipulating the singular values.
-
+# Gridsearch on scale value and threshold
 # %%
-def rank(attn: Float[Tensor, "seq seq"]) -> tuple[Int[Tensor, "seq"], Int[Tensor, "seq seq"]]:
-    """Returns the rank of the diagonal element among all the other elements of the attention matrix"""
-    sorted_attn = attn.argsort(dim=-1, descending=False)
-    
-    rank = sorted_attn.diagonal()
-    
+@torch.no_grad()
+def compute_rank(attn: Float[Tensor, "seq seq"]) -> tuple[Int[Tensor, "seq"], Int[Tensor, "seq seq"]]:
+    """Returns the rank of the diagonal element among all the other elements of the attention matrix using torch only (CPU)."""
+    dev = attn.device
+    attn = attn.to('cpu')
+    # Get the sorted indices for each row (descending order)
+    sorted_attn = torch.argsort(attn, dim=-1, descending=True)
+    # For each row, find the rank (position) of the diagonal element
+    seq_len = attn.size(0)
+    idx = torch.arange(seq_len, device=dev)
+    sorted_attn = sorted_attn.to(dev)
+    # For each row, where is the diagonal index in the sorted list?
+    rank = (sorted_attn == idx.unsqueeze(1)).nonzero(as_tuple=False)[:, 1]
     return rank, sorted_attn
 
 def mrr(rank: Int[Tensor, "seq"]) -> float:
@@ -382,6 +389,14 @@ def accuracy_k(rank: Int[Tensor, "seq"], k=32) -> float:
     """Computes the accuracy at k given the rank of the diagonal elements"""
     return (rank < k).float().mean().item()
 
+def precision_k(rank: Int[Tensor, "seq"], gt_rank: Int[Tensor, "seq"], k : int = 128):
+    "computes how many relevant items are retrieved within the top-k"
+    return ((rank < k) * (gt_rank < k)).sum() / k
+
+def rank_increase(rank: Int[Tensor, "seq"], base_rank: Int[Tensor, "seq"]) -> float:
+    """Computes the rank increase given the rank of the diagonal elements"""
+    return (base_rank - rank).float().mean().item()
+
 def spearman(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq seq"]) -> float:
     """Computes the row-wise correlation coefficient between the predicted and ground truth ranks"""
     # sequence length
@@ -390,8 +405,8 @@ def spearman(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq se
     # prepare rank matrices
     device = pred_sorted.device
     idx = torch.arange(seq_len, device=device).unsqueeze(0).expand(pred_sorted.size(0), -1)  # (seq, seq)
-    pred_ranks = torch.zeros_like(pred_sorted, dtype=torch.float, device=device)
-    gt_ranks   = torch.zeros_like(gt_sorted,   dtype=torch.float, device=device)
+    pred_ranks = torch.zeros_like(pred_sorted, device=device)
+    gt_ranks   = torch.zeros_like(gt_sorted, device=device)
     # scatter the rank positions
     pred_ranks.scatter_(1, pred_sorted, idx)
     gt_ranks.scatter_(1,   gt_sorted,   idx)
