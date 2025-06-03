@@ -418,7 +418,66 @@ def spearman(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq se
     # return mean over rows as Python float
     return rho.mean().item()
 
+# %%
+from tqdm import tqdm
+DEV = 'cuda:1'
+W_Q = model.blocks[1].attn.W_Q[5].clone().detach().to(DEV)
+W_K = model.blocks[1].attn.W_K[5].clone().detach().to(DEV)
+U_Q, S, U_K = torch.linalg.svd(W_Q @ W_K.T,)
 
+# Zero out noise components
+S = S[:64]
+U_Q = U_Q[:, :64]
+U_K = U_K[:64, :]
+
+LIM = 32768 # attn_in.shape[0]
+E = attn_in[:LIM,:LIM].to(DEV)
+
+# attn_svd = E @ U_Q @ torch.diag(S) @ U_K @ E.T
+base_rank, ideal_attn_sorted = compute_rank(attn_ideal[:LIM,:LIM].to('cpu'))
+
+pairwise_sim = (U_Q.T @ U_K.T)
+components = torch.argsort(torch.diagonal(pairwise_sim) * S).numpy(force=True)
+
+records = []
+
+with torch.no_grad():
+    for k in tqdm([1,2,3,4,6,10,16,24,36]):
+        for v in np.arange(-5,1.3,0.1):
+            ablated = components[:k]
+            s = S.clone().detach().to(DEV)
+            s[ablated] *= v
+
+            attn_svd_abl = E @ U_Q @ torch.diag(s) @ U_K @ E.T
+
+            rank, attn_sorted = compute_rank(attn_svd_abl.to('cpu'))
+            
+            records.append({
+                'scale': v,
+                'k': k,
+                'rank': rank.float().mean().item(),
+                # 'rank_increase': rank_increase(rank, base_rank),
+                'spearman': spearman(attn_sorted, ideal_attn_sorted),
+                'mrr': mrr(rank),
+                'accuracy_1024': accuracy_k(rank, k=1024),
+                'accuracy_256': accuracy_k(rank, k=256),
+                'accuracy_128': accuracy_k(rank, k=128),
+                'precision_32': precision_k(rank, base_rank, k=32),
+                'precision_64': precision_k(rank, base_rank, k=64),
+                'precision_128': precision_k(rank, base_rank, k=128),
+                'precision_256': precision_k(rank, base_rank, k=256),
+                'precision_512': precision_k(rank, base_rank, k=512),
+                'precision_1024': precision_k(rank, base_rank, k=1024),
+            })
+            del attn_sorted, rank, attn_svd_abl, s 
+            clean_mem()
+
+# Save records to pandas and csv
+import pandas as pd
+import seaborn as sns
+df = pd.DataFrame(records)
+df.scale = df.scale.round(2)
+df.to_csv("attention_records.csv", index=False)
 
 # pairwise_sim = (U_Q @ U_K)
 # sns.histplot(pairwise_sim.diagonal().numpy(force=True), bins=25)
