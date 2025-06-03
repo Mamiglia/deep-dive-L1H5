@@ -30,11 +30,11 @@ def barplot(values, **set_args):
 def clean_mem():
     import gc
     
-    for var in ['loss', 'E']:
-        if var in locals():
-            del locals()[var]
-        elif var in globals():
-            del globals()[var]
+    # for var in ['loss', 'E']:
+    #     if var in locals():
+    #         del locals()[var]
+    #     elif var in globals():
+    #         del globals()[var]
         
     gc.collect()
     torch.cuda.empty_cache()
@@ -201,6 +201,15 @@ tokens = [
 display_most_attended_tokens(tokens, attn, k=10)
 
 # %%
+W_Q = model.blocks[1].attn.W_Q[5].clone().detach()
+W_K = model.blocks[1].attn.W_K[5].clone().detach()
+W_QK_ideal = W_Q @ W_K.T
+W_QK_ideal.fill_diagonal_(2)
+attn_ideal = attn_in @ W_QK_ideal @ attn_in.T
+
+display_most_attended_tokens(tokens, attn_ideal, k=10)
+
+# %%
 pairwise_sim = (W_Q.T @ W_K)
 
 barplot(torch.diagonal(pairwise_sim), ylabel='cos(θ)', title='Similarity between W_K and W_Q rows')
@@ -283,12 +292,12 @@ barplot(W_Q.grad.pow(2).mean(dim=0))
 sns.histplot(W_Q.grad.flatten().abs().cpu().numpy(), bins=50).set(yscale='log')
 
 # %%
-wk =  W_K.clone().to('cuda:1').detach()
-wq =  W_Q.clone().to('cuda:1').detach()
-attn_in = attn_in.to('cuda:1')
+wk =  W_K.clone().to('cuda:0').detach()
+wq =  W_Q.clone().to('cuda:0').detach()
+attn_in = attn_in.to('cuda:0')
 
-wk -= W_K.grad.to('cuda:1')
-# wq -= W_Q.grad.to('cuda:1')
+wk -= W_K.grad.to('cuda:0')
+# wq -= W_Q.grad.to('cuda:0')
 attn_ablated = attn_in @ wq @ wk.T @ attn_in.T 
 
 sns.heatmap(attn_ablated[group_toks][:,group_toks].numpy(force=True),
@@ -353,7 +362,7 @@ barplot(torch.diagonal(pairwise_sim) * S)
 # %%
 s = S.clone().detach()
 ablated = torch.diagonal(pairwise_sim) * S < -0.5
-s[ablated] *= -2
+s[ablated] *= -5
 attn_svd_abl = attn_in @ U_Q @ torch.diag(s) @ U_K @ attn_in.T
 
 sns.heatmap(attn_svd_abl[group_toks][:,group_toks].numpy(force=True),
