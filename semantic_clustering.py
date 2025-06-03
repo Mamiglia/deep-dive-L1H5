@@ -243,12 +243,12 @@ group_tokens = [
 group_toks=model.tokenizer(group_tokens).input_ids
 group_toks = list(chain(*group_toks))
 
-sns.heatmap(attn[group_toks][:,group_toks].numpy(force=True),
+sns.heatmap(attn_ideal[group_toks][:,group_toks].numpy(force=True),
     xticklabels=group_tokens,
     yticklabels = group_tokens,
     vmin=0,
 )
-
+# %%
 def selfloss(scores : Tensor):
     self_score = scores.diagonal()
     total_score = scores.sum(dim=1)
