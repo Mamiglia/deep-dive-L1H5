@@ -1,0 +1,96 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background-color: #f2e7cdc5; /* lighter version of #e7d3b3 */
+  color: #333;
+  height: 100vh;
+}
+
+h1 {
+  text-align: center;
+  padding-top: 0; /* Remove top padding since it's now in flexbox */
+}
+
+/* Remove old label, select styles and add new ones */
+#controls {
+  background-color: rgba(231, 211, 179, 0.1);
+  border-bottom: 1px solid #e7d3b3;
+  display: flex; 
+  align-items: center; 
+  justify-content: space-between; 
+  gap: 2rem; 
+  padding: 1rem; 
+  flex-wrap: wrap;
+}
+
+#cluster-filters label {
+  cursor: pointer;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+#cluster-filters input[type="checkbox"] {
+  margin: 0;
+}
+
+#cluster-filters select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #e7d3b3;
+  border-radius: 4px;
+  background-color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+#cluster-filters select:focus {
+  outline: 2px solid #4e79a7;
+  outline-offset: 1px;
+}
+
+#sigma-container {
+  margin: 0 auto;
+  width: 95%;
+  height: 80vh;
+  border: 2px solid #e7d3b3;
+  border-radius: 8px;
+  background-color: #ffffff;
+}
+
+/* Cluster Colors */
+.sigma-node.cluster-A {
+  fill: #f28e2b;
+}
+
+.sigma-node.cluster-B {
+  fill: #4e79a7;
+}
+
+.sigma-node.cluster-C {
+  fill: #59a14f;
+}
+
+/* Node hover effect */
+.sigma-node:hover {
+  stroke: #000;
+  stroke-width: 2px;
+}
+
+/* Optional edge styling for weights */
+.sigma-edge {
+  stroke-opacity: 1;
+}
+
+.sigma-edge[data-weight="high"] {
+  stroke-width: 3;
+  stroke: #d62728;
+}
+
+.sigma-edge[data-weight="medium"] {
+  stroke-width: 2;
+  stroke: #ffbb78;
+}
+
+.sigma-edge[data-weight="low"] {
+  stroke-width: 0.5;
+  stroke: #c7c7c7;
+}

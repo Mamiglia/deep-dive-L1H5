@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPT2 Head 1.5 Visualizer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/graphology@0.25.0/dist/graphology.umd.min.js"></script>
+  <script src="https://unpkg.com/sigma@2.3.0/build/sigma.min.js"></script>
+</head>
+<body>
+  <div id="controls">
+    <h1 style="margin: 0;">GPT2 Head 1.5: semantic space</h1>
+    <div id="cluster-filters" style="display: flex; gap: 1rem; align-items: center;">
+      <span>Filter by Cluster:</span>
+      <select id="cluster-select">
+        <option value="all">All</option>
+        <!-- Options will be added dynamically -->
+      </select>
+    </div>
+  </div>
+
+  <div id="sigma-container" style="width: 100%; height: 100%;"></div>
+
+  <script>
+    const container = document.getElementById('sigma-container');
+    const graph = new graphology.Graph();
+
+    fetch('token_similarity_graphology.json')
+      .then(res => res.json())
+      .then(data => {
+        graph.import(data);
+
+        // 1. Set default faint edge size and color
+        graph.forEachEdge((edge, attrs) => {
+          graph.setEdgeAttribute(edge, 'size', Math.log10(1 + attrs.weight) );
+          graph.setEdgeAttribute(edge, 'color', 'rgba(64,64,64,0.3)');
+        });
+
+        // Set node colors based on cluster and sizes based on degree
+        graph.forEachNode((node, attrs) => {
+          const colorMap = {
+            0: '#59a14f',   // green
+            1: '#f28e2b',   // orange
+            2: '#4e79a7',   // blue
+            3: '#e15759',   // red
+            4: '#b07aa1',   // purple
+            5: '#76b7b2',   // teal
+            6: '#edc948',   // yellow
+            7: '#ff9da7',   // pink
+            8: '#9c755f',   // brown
+            9: '#bab0ab',   // gray
+            10: '#af7aa1',  // violet
+            11: '#86b7b2',  // light teal
+            12: '#e1c948',  // light yellow
+            13: '#e377c2',  // magenta
+            14: '#8c564b',  // dark brown
+
+          };
+          const degree = graph.degree(node);
+          const size = Math.log(degree + 1) * 1.5;           // scale factor for visibility
+          graph.setNodeAttribute(node, 'color', colorMap[attrs.cluster] || '#999');
+          graph.setNodeAttribute(node, 'size', size);
+        });
+
+        // Use the global Sigma constructor (not sigma.Sigma)
+        const renderer = new Sigma(graph, container, {
+          labelRenderer: (context, data, settings) => {
+            if (!data.forceLabel && !data.label) return;
+            
+            const label = data.label || data.key;
+            const size = settings.labelSize;
+            
+            context.fillStyle = settings.labelColor;
+            context.font = `${size}px monospace`;
+            context.fillText(label, data.x + data.size + 3, data.y + size / 3);
+          }
+        });
+
+        // 2. On hover, further fade edges not connected to the hovered node via size
+        renderer.on("enterNode", ({ node }) => {
+          // fade edges using both size and color
+          graph.forEachEdge((edge, attrs, source, target) => {
+            if (source === node) {
+              graph.setEdgeAttribute(edge, 'size', Math.log10(1 + attrs.weight)*2);
+              graph.setEdgeAttribute(edge, 'color', 'rgba(64,64,64,0.6)');
+            } else {
+              graph.setEdgeAttribute(edge, 'size', 0.2);
+              graph.setEdgeAttribute(edge, 'color', 'rgba(64,64,64,0.3)');
+            }
+          });
+
+          // reset all labels, then force-label hovered node + its neighbors
+          graph.forEachNode(n =>
+            graph.setNodeAttribute(n, 'forceLabel', false)
+          );
+          graph.setNodeAttribute(node, 'forceLabel', true);
+          graph.forEachNeighbor(node, neighbor =>
+            graph.setNodeAttribute(neighbor, 'forceLabel', true)
+          );
+        });
+
+        // 3. On leave, restore default faint edge size to all edges
+        renderer.on("leaveNode", () => {
+          // restore edge sizes and colors
+            graph.forEachEdge((edge, attrs) => {
+            graph.setEdgeAttribute(edge, 'size', Math.log10(1 + attrs.weight) );
+            graph.setEdgeAttribute(edge, 'color', 'rgba(64,64,64,0.3)');
+            });
+          // clear all force-label flags
+          graph.forEachNode(n =>
+            graph.setNodeAttribute(n, 'forceLabel', false)
+          );
+        });
+
+        // Find unique clusters and create select options
+        const clusters = new Set();
+        graph.forEachNode((node, attrs) => {
+          clusters.add(attrs.cluster);
+        });
+        
+        const clusterSelect = document.getElementById('cluster-select');
+        const sortedClusters = Array.from(clusters).sort((a, b) => a - b);
+        
+        sortedClusters.forEach(cluster => {
+          const option = document.createElement('option');
+          option.value = cluster;
+          option.textContent = `Cluster ${cluster}`;
+          clusterSelect.appendChild(option);
+        });
+
+        clusterSelect.addEventListener('change', (e) => {
+          const selectedCluster = e.target.value;
+          
+          graph.forEachNode((node, attrs) => {
+            const shouldHide = selectedCluster !== 'all' && attrs.cluster != selectedCluster;
+            graph.setNodeAttribute(node, 'hidden', shouldHide);
+          });
+        });
+      });
+  </script>
+</body>
+</html>
