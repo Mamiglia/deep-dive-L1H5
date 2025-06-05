@@ -13,6 +13,9 @@ from transformer_lens import (
     HookedTransformerConfig,
     utils,
 )
+from transformers import PreTrainedTokenizerBase
+from rich.table import Table
+from rich.console import Console
 
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
@@ -171,3 +174,27 @@ KEYWORDS = {
     "weather": ["rain", "snow", "wind", "storm", "sun"],
 }
 
+
+
+def get_most_attended_tokens(token:str, attn:Tensor, tokenizer: PreTrainedTokenizerBase, k=16):
+    tok_idx = tokenizer(token).input_ids
+    
+    assert len(tok_idx) == 1, f'Can only handle one token at a time. Currently {tok_idx}'
+    tok_idx = tok_idx[0]
+    
+    scores = attn[tok_idx]
+    max_val, max_idx = torch.topk(scores, k, largest=True, sorted=True)
+    return tokenizer.batch_decode(max_idx), max_val
+    
+def display_most_attended_tokens(tokens, attn, tokenizer:PreTrainedTokenizerBase, k=10):
+    table = Table(title="Most Attended Tokens")
+    table.add_column("Input Token", style="bold")
+    table.add_column("Top Attended Tokens", style="dim")
+    for token in tokens:
+        top_tokens, scores = get_most_attended_tokens(token, attn, k=k, tokenizer=tokenizer)
+        table.add_row(
+            repr(token),
+            ", ".join(top_tokens),
+        )
+    console = Console()
+    console.print(table)
