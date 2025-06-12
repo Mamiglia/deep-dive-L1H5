@@ -250,7 +250,7 @@ def detect_token_communities(attn: torch.Tensor, vocab: list[str], threshold_qua
 
     # Step 5: Leiden community detection
     leiden_partition = leidenalg.find_partition(g, leidenalg.ModularityVertexPartition, weights='weight', 
-    max_comm_size=1024
+    max_comm_size=512
     )
     partition = {i: comm for comm, cluster in enumerate(leiden_partition) for i in cluster}
 
@@ -386,7 +386,7 @@ def create_cluster_initial_positions(partition, vocab_size):
 initial_pos = create_cluster_initial_positions(partition, len(VOCAB))
 
 # Use cluster-based initial positions for spring layout
-pos = nx.spring_layout(G, pos=initial_pos, seed=42, weight='softmax', iterations=1000)
+pos = nx.spring_layout(G, pos=initial_pos, seed=42, weight='softmax', iterations=50, k=0.007)
 
 # Save to file, including cluster and coordinates
 graphology_json = nx_to_graphology_json(G, VOCAB, partition=partition, pos=pos, prob_matrix=normalized_attn.cpu().numpy(), softmax=torch.softmax(normalized_attn, dim=1).cpu().numpy())
