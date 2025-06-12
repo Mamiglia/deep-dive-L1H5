@@ -119,8 +119,8 @@ def vocab_attn(
         # ("blocks.1.attn.hook_q", cache_hook),
         # ("blocks.1.attn.hook_k", cache_hook),
         ('blocks.0.ln1.hook_normalized', ablate_reduce_component),
-        ('blocks.0.hook_mlp_out', cache_hook),
-        ('blocks.0.hook_resid_post', replace_hook ),
+        # ('blocks.0.hook_mlp_out', cache_hook),
+        # ('blocks.0.hook_resid_post', replace_hook ),
         (out_hook, cache_hook),  
         (out_hook, stop_computation),  
     ]
@@ -197,51 +197,12 @@ def cluster_tokens(sim_matrix, tokens, n_clusters=20):
         cluster_dict.setdefault(label, []).append(token)
     return cluster_dict
 
-clusters = cluster_tokens(normalized_attn, VOCAB, n_clusters=10)
+clusters = cluster_tokens(normalized_attn.clamp(0), VOCAB, n_clusters=10)
 
 # Display some clusters
 for cluster_id, tokens in list(clusters.items())[:5]:
     print(f"Cluster {cluster_id}: {tokens[:10]}{'...' if len(tokens) > 10 else ''}")
 
-# %%
-import umap
-
-def plot_umap(sim_matrix, tokens, num_points=300):
-    reducer = umap.UMAP(metric='cosine')
-    coords = reducer.fit_transform(sim_matrix[:num_points].cpu().numpy())
-
-    plt.figure(figsize=(12, 8))
-    plt.scatter(coords[:, 0], coords[:, 1], alpha=0.7)
-
-    for i, token in enumerate(tokens[:num_points]):
-        plt.text(coords[i, 0], coords[i, 1], token, fontsize=8)
-    plt.title("UMAP of token similarities")
-    plt.show()
-
-plot_umap(normalized_attn, VOCAB, num_points=256)
-
-# %%
-from scipy.cluster.hierarchy import linkage, dendrogram
-from scipy.spatial.distance import squareform
-
-def plot_dendrogram(sim_matrix, tokens, num_tokens=1024):
-    # Convert similarity to distance
-    sim_np = sim_matrix[:num_tokens, :num_tokens].cpu().numpy()
-    sim_np /= sim_np.sum(axis=1, keepdims=True)
-    dist = 1 - sim_np  # cosine-style distance
-    
-    # Condensed form for linkage
-    condensed_dist = squareform(dist, checks=False)
-    
-    Z = linkage(condensed_dist, method='ward')
-    
-    plt.figure(figsize=(16, 6))
-    dendrogram(Z, labels=tokens[:num_tokens].tolist(), leaf_rotation=90)
-    plt.title("Hierarchical Clustering Dendrogram")
-    plt.tight_layout()
-    plt.show()
-
-plot_dendrogram(normalized_attn, VOCAB)
 # %%
 import torch
 import networkx as nx
@@ -294,7 +255,7 @@ def detect_token_communities(attn: torch.Tensor, vocab: list[str], threshold_qua
     partition = {i: comm for comm, cluster in enumerate(leiden_partition) for i in cluster}
 
     # Step 6: Also build NetworkX DiGraph for visualization
-    G = nx.from_numpy_array(adj_matrix, create_using=nx.Graph)
+    G = nx.from_numpy_array(adj_matrix, create_using=nx.DiGraph)
 
     # Add softmax and normalized value as edge attributes
     attn_softmax = torch.softmax(attn_sym, dim=1).cpu().numpy()
@@ -425,15 +386,16 @@ def create_cluster_initial_positions(partition, vocab_size):
 initial_pos = create_cluster_initial_positions(partition, len(VOCAB))
 
 # Use cluster-based initial positions for spring layout
-pos = nx.spring_layout(G, pos=initial_pos, k = 5 / LIM**0.5)
+pos = nx.spring_layout(G, pos=initial_pos, seed=42, weight='softmax', iterations=1000)
 
 # Save to file, including cluster and coordinates
 graphology_json = nx_to_graphology_json(G, VOCAB, partition=partition, pos=pos, prob_matrix=normalized_attn.cpu().numpy(), softmax=torch.softmax(normalized_attn, dim=1).cpu().numpy())
-with open("viz/token_similarity_graphology.json", "w") as f:
+print(f"Graphology JSON created with {len(graphology_json['nodes'])} nodes and {len(graphology_json['edges'])} edges.")
+with open("docs/token_similarity_graphology.json", "w") as f:
     # Use orjson for faster JSON dumping if available
     try:
         f.write(orjson.dumps(graphology_json).decode())
     except ImportError:
         json.dump(graphology_json, f, indent=2)
-print("Graph saved to viz/token_similarity_graphology.json")
+print("Graph saved to docs/token_similarity_graphology.json")
 # %%
