@@ -26,6 +26,26 @@
     const container = document.getElementById('sigma-container');
     const graph = new graphology.Graph();
 
+    // Define cluster names
+    const clusterNames = {
+      0: 'Digits',   
+      //1: '',   
+      2: 'Word pieces',   
+      3: 'Verbs, conjuctions',   
+      4: 'Capital letters',   
+      5: 'Symbols, countries',   
+      //6: '',   
+      7: 'Numbers',   
+      8: 'Years',   
+      9: 'People references',   
+      10: 'Time periods, months',  
+      11: 'Spatial references',  
+      12: 'Literal numbers',  
+      13: 'Conjunctions, prepositions',  
+      14: 'Letters',  
+      15: 'Colours',
+    };
+
     fetch('token_similarity_graphology.json')
       .then(res => res.json())
       .then(data => {
@@ -40,22 +60,22 @@
         // Set node colors based on cluster and sizes based on degree
         graph.forEachNode((node, attrs) => {
           const colorMap = {
-            0: '#59a14f',   // green
-            1: '#f28e2b',   // orange
-            2: '#4e79a7',   // blue
-            3: '#e15759',   // red
-            4: '#b07aa1',   // purple
-            5: '#76b7b2',   // teal
-            6: '#edc948',   // yellow
-            7: '#ff9da7',   // pink
-            8: '#9c755f',   // brown
-            9: '#bab0ab',   // gray
-            10: '#af7aa1',  // violet
-            11: '#86b7b2',  // light teal
-            12: '#e1c948',  // light yellow
-            13: '#e377c2',  // magenta
-            14: '#8c564b',  // dark brown
-
+            0: '#f58231',   
+            1: '#dcbeff',   
+            2: '#ffe119',   
+            3: '#bfef45',   
+            4: '#3cb44b',   
+            5: '#42d4f4',   
+            6: '#4363d8',   
+            7: '#911eb4',   
+            8: '#f032e6',   
+            9: '#469990',   
+            10: '#000075',  
+            11: '#800000',
+            12: '#808000',
+            13: '#ffd8b1',
+            14: '#fabed4',
+            15: '#e6194B', 
           };
           const degree = graph.degree(node);
           const size = Math.log(degree + 1) * 1.5;           // scale factor for visibility
@@ -125,7 +145,8 @@
         sortedClusters.forEach(cluster => {
           const option = document.createElement('option');
           option.value = cluster;
-          option.textContent = `Cluster ${cluster}`;
+          const clusterName = clusterNames[cluster] || `Unnamed Cluster`;
+          option.textContent = `${clusterName} [${cluster}]`;
           clusterSelect.appendChild(option);
         });
 
