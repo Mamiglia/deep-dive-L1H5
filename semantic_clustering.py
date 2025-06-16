@@ -6,7 +6,6 @@ from transformer_lens import ActivationCache, HookedTransformer, utils
 from transformer_lens.components import MLP, Embed, LayerNorm, Unembed
 from transformer_lens.hook_points import HookPoint
 
-device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
 from sae_lens import HookedSAETransformer, SAE
 from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
@@ -49,10 +48,13 @@ import circuitsvis as cv
 from src.maps import *
 from src.utils import *
 
+device = 'cuda:0' #torch.device("mps" if torch.backends.mps.is_available() else "cuda:1" if torch.cuda.is_available() else "cpu")
+torch.cuda.set_device(0)
+
 LAYER = 1
 HEAD_IDX= 5
 HOOK_POINT = f"blocks.{LAYER-1}.hook_resid_post"
-model = HookedSAETransformer.from_pretrained("gpt2-small", device=device)
+model = HookedSAETransformer.from_pretrained("gpt2-small")
 
 
 #%%
@@ -88,7 +90,7 @@ def vocab_attn(
     called on the model's logit output.
     """
     model.reset_hooks()
-    vocab = torch.arange(0, VOCAB_SIZE)
+    vocab = torch.arange(0, VOCAB_SIZE, device=device)
     ablate_components = [
         'hook_pos_embed',
         'blocks.0.hook_attn_out',
@@ -113,7 +115,7 @@ def vocab_attn(
         # ("blocks.1.attn.hook_k", cache_hook),
         ('blocks.0.ln1.hook_normalized', ablate_reduce_component),
         ('blocks.0.hook_mlp_out', cache_hook),
-        ('blocks.0.hook_resid_post', replace_hook ),
+        # ('blocks.0.hook_resid_post', replace_hook ),
         (out_hook, cache_hook),  
         (out_hook, stop_computation),  
     ]
@@ -141,8 +143,8 @@ W_K = model.blocks[1].attn.W_K[5].clone().detach()
 # k = F.layer_norm(attn_in, (768,)) #@ W_K
 
 # QK similarity
-# q = attn_in @ W_Q
-# k = attn_in @ W_K
+q = attn_in @ W_Q
+k = attn_in @ W_K
 
 # %%
 attn = FactoredMatrix(k,q.T).AB
@@ -164,28 +166,7 @@ sns.heatmap(attn[:L, :L].numpy(force=True),
 )
 # %%
 
-def get_most_attended_tokens(token:str, attn:Tensor, k=16, tokenizer: PreTrainedTokenizerBase=model.tokenizer):
-    tok_idx = tokenizer(token).input_ids
-    
-    assert len(tok_idx) == 1, f'Can only handle one token at a time. Currently {tok_idx}'
-    tok_idx = tok_idx[0]
-    
-    scores = attn[tok_idx]
-    max_val, max_idx = torch.topk(scores, k, largest=True, sorted=True)
-    return tokenizer.batch_decode(max_idx), max_val
-    
-def display_most_attended_tokens(tokens, attn, k=10, tokenizer=model.tokenizer):
-    table = Table(title="Most Attended Tokens")
-    table.add_column("Input Token", style="bold")
-    table.add_column("Top Attended Tokens", style="dim")
-    for token in tokens:
-        top_tokens, scores = get_most_attended_tokens(token, attn, k=k, tokenizer=tokenizer)
-        table.add_row(
-            repr(token),
-            ", ".join(top_tokens),
-        )
-    console = Console()
-    console.print(table)
+
 
 # Example usage:
 tokens = [
@@ -198,16 +179,7 @@ tokens = [
     ' Italy',
     # ' </'
 ]
-display_most_attended_tokens(tokens, attn, k=10)
-
-# %%
-W_Q = model.blocks[1].attn.W_Q[5].clone().detach()
-W_K = model.blocks[1].attn.W_K[5].clone().detach()
-W_QK_ideal = W_Q @ W_K.T
-W_QK_ideal.fill_diagonal_(2)
-attn_ideal = attn_in @ W_QK_ideal @ attn_in.T
-
-display_most_attended_tokens(tokens, attn_ideal, k=10)
+display_most_attended_tokens(tokens, attn, k=10, tokenizer= model.tokenizer)
 
 # %%
 pairwise_sim = (W_Q.T @ W_K)
@@ -217,45 +189,63 @@ barplot(torch.diagonal(pairwise_sim), ylabel='cos(θ)', title='Similarity betwee
 torch.cuda.empty_cache()
 
 group_tokens = [
+    ' Monday', # week days
+    ' Tuesday',
+    ' Wednesday',
+    ' Thursday',
+    ' Friday', 
+    ' Saturday',
     ' red',
-    ' Green',
-    ' Blue', 
-    'blue', 
-    'orange', 
-    ' brown', 
-    ' 49', 
-    ' 52', 
-    ' 56', 
-    ' 68', 
-    ' 69',  # numbers
-    ' 82', 
-    'Monday', # week days
-    'Friday', 
-    ' weekend', 
-    'Week', 
-    'Wednesday', 
-    ' yesterday', 
-    ' John',  # names
-    ' Richard',
-    ' Liam', 
-    ' Anne', 
-    ' Sophie',
-    ' Sarah',
+    ' blue', 
+    ' Blue',
+    ' green',
+    ' silver', 
+    ' White', 
+    ' 1918', # years
+    ' 1920',
+    ' 1930',	
+    ' 1943', 
+    ' 1998',
+    ' 2000',
+    ' You', # pronouns
+    ' He',
+    ' his',
+    ' she',
+    ' her',
+    ' their',
     ' Italy', # countries
     ' Iceland', 
     ' Austria',
     ' Mexico',
     ' Spain', 
-    ' France' 
+    ' France', 
+    # ' June', # months
+    # ' July',
+    # ' August',
+    # ' September',
+    # ' October',
+    # ' November',
+    # ' saw', # verbs
+    # ' changes',
+    # ' have',
+    # ' were',
+    # ' explained',
+    # ' said',
+    # ' 43', # numbers
+    # ' 69',
+    # ' 78',
+    # ' 83',
+    # ' 32',
+    # ' 12',
 ]
 
 group_toks=model.tokenizer(group_tokens).input_ids
 group_toks = list(chain(*group_toks))
 
-sns.heatmap(attn_ideal[group_toks][:,group_toks].numpy(force=True),
-    xticklabels=group_tokens,
-    yticklabels = group_tokens,
-    vmin=0,
+a = attn[group_toks][:,group_toks].numpy(force=True)
+# a -= a.diagonal()
+sns.heatmap(a, cmap='icefire', center=0,xticklabels=group_tokens, yticklabels=group_tokens).set(
+    title='Attention map for semantic groups in GPT2 head 1.5',
 )
 # %%
 def selfloss(scores : Tensor):
@@ -398,9 +388,10 @@ def accuracy_k(rank: Int[Tensor, "seq"], k=32) -> float:
     """Computes the accuracy at k given the rank of the diagonal elements"""
     return (rank < k).float().mean().item()
 
-def precision_k(rank: Int[Tensor, "seq"], gt_rank: Int[Tensor, "seq"], k : int = 128):
+def precision_k(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq seq"], k : int = 128):
     "computes how many relevant items are retrieved within the top-k"
-    return ((rank < k) * (gt_rank < k)).sum() / k
+    seq_len = pred_sorted.size(0)
+    return (((pred_sorted < k) * (gt_sorted < k)).sum() / k / seq_len).item()
 
 def rank_increase(rank: Int[Tensor, "seq"], base_rank: Int[Tensor, "seq"]) -> float:
     """Computes the rank increase given the rank of the diagonal elements"""
@@ -429,7 +420,7 @@ def spearman(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq se
 
 # %%
 from tqdm import tqdm
-DEV = 'cuda:1'
+DEV = device
 W_Q = model.blocks[1].attn.W_Q[5].clone().detach().to(DEV)
 W_K = model.blocks[1].attn.W_K[5].clone().detach().to(DEV)
 U_Q, S, U_K = torch.linalg.svd(W_Q @ W_K.T,)
@@ -439,8 +430,8 @@ S = S[:64]
 U_Q = U_Q[:, :64]
 U_K = U_K[:64, :]
 
-LIM = 32768 # attn_in.shape[0]
-E = attn_in[:LIM,:LIM].to(DEV)
+LIM = attn_in.shape[0]
+E = attn_in[:LIM].to(DEV)
 
 # attn_svd = E @ U_Q @ torch.diag(S) @ U_K @ E.T
 base_rank, ideal_attn_sorted = compute_rank(attn_ideal[:LIM,:LIM].to('cpu'))
@@ -451,8 +442,8 @@ components = torch.argsort(torch.diagonal(pairwise_sim) * S).numpy(force=True)
 records = []
 
 with torch.no_grad():
-    for k in tqdm([1,2,3,4,6,10,16,24,36]):
-        for v in np.arange(-5,1.3,0.1):
+    for k in tqdm([1,2,3,4,8,16,24,36]):
+        for v in np.arange(-5,1.3,0.25):
             ablated = components[:k]
             s = S.clone().detach().to(DEV)
             s[ablated] *= v
@@ -462,7 +453,7 @@ with torch.no_grad():
             rank, attn_sorted = compute_rank(attn_svd_abl.to('cpu'))
             
             records.append({
-                'scale': v,
+                'scale': round(v, 2),
                 'k': k,
                 'rank': rank.float().mean().item(),
                 # 'rank_increase': rank_increase(rank, base_rank),
@@ -478,6 +469,7 @@ with torch.no_grad():
                 'precision_512': precision_k(rank, base_rank, k=512),
                 'precision_1024': precision_k(rank, base_rank, k=1024),
             })
+            print(records[-1])
             del attn_sorted, rank, attn_svd_abl, s 
             clean_mem()
 
@@ -496,7 +488,7 @@ import matplotlib.pyplot as plt
 # List of columns to plot (excluding 'scale' and 'k')
 value_columns = df.columns.to_list()
 value_columns.remove('k')
-value_columns.remove("score")
+value_columns.remove("scale")
 
 n_cols = 3
 n_rows = (len(value_columns) + n_cols - 1) // n_cols

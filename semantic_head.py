@@ -15,6 +15,8 @@ from IPython.display import HTML, IFrame, clear_output, display
 
 import torch.nn.functional as F
 import random
+import seaborn as sns
+from itertools import chain
 
 from jaxtyping import Float, Int
 import circuitsvis as cv
@@ -81,9 +83,9 @@ display(cv.attention.attention_patterns(tokens=str_tokens, attention=attn.unsque
 KEYWORDS = {
     "colors": ["blue", "red", "green", "yellow", "purple"],
     "animals": ["dog", "cat", "mouse", "horse", "sheep"],
-    "fruits": ["apple", "banana", "grape", "peach", "lemon"],
+    # "fruits": ["apple", "banana", "grape", "peach", "lemon"],
     "emotions": ["happy", "sad", "angry", "scared", "proud"],
-    "weather": ["rain", "snow", "wind", "storm", "sun"],
+    # "weather": ["rain", "snow", "wind", "storm", "sun"],
     "numbers": ["2", "69", "4", "22", "32", "50"]
 }
 
@@ -142,8 +144,47 @@ def build_prompt(seq_len=64) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
     
     return constructed_prompt, attention_pattern
 
-prompt, attn = build_prompt(seq_len=63)
+prompt, attn = build_prompt(seq_len=127)
 attn.sum(dim=-1)    
+# %%
+# Plot attention as a heatmap with corresponding tokens
+fig, ax = plt.subplots(figsize=(6,6))
+
+# Create a masked version of the attention matrix
+masked_attn = attn.clone().float()
+# Get upper triangular indices (including diagonal)
+mask = torch.triu(torch.ones_like(masked_attn, dtype=torch.bool), diagonal=1)
+# Replace upper triangular values with NaN to make them white in the plot
+masked_attn[mask] = float('nan')
+# Plot with seaborn for improved aesthetics
+tokens_to_show = ['<bos>'] + [t.replace('Ġ', ' ') for t in prompt]  # Replace tokenizer prefix if needed
+# Create a colormap instance for consistent coloring in both heatmap and legend
+cmap = sns.color_palette("berlin", as_cmap=True)
+
+# Create the heatmap
+sns.heatmap(masked_attn.numpy(), 
+            cmap=cmap, 
+            mask=np.isnan(masked_attn.numpy()),
+            vmin=0, 
+            vmax=1, 
+            xticklabels=tokens_to_show,
+            yticklabels=tokens_to_show,
+            ax=ax, cbar=False)
+
+# Customize the legend
+plt.legend(
+    handles=[plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=cmap(cmap.N), markersize=12, label='Attended'),
+             plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=cmap(0), markersize=12, label='Not Attended')],
+    loc='upper right',
+    title='Attention Status'
+)
+
+# Add title
+plt.title("Empirically Observed Attention Pattern")
+
+# Adjust layout
+plt.tight_layout()
+plt.show()
 # %%
 toks = model.tokenizer(prompt).input_ids
 toks = list(chain(*toks))
@@ -164,7 +205,7 @@ for layer in [LAYER]:
 
 # %%
 attn = attn.to(device)
-gt_attn = cache["pattern", layer]
+gt_attn = cache["pattern", layer].to(device)
 
 
 num_heads  = 12
@@ -174,9 +215,31 @@ for head_idx in range(num_heads):
     total_attn = gt_attn[head_idx].sum()
     explained_attn[head_idx] = (gt_attn[head_idx] * attn).sum() / total_attn
     unexplained_attn[head_idx] = (gt_attn[head_idx]*(1 - attn)).sum() / total_attn
-    
-plt.plot(explained_attn)
-plt.plot(unexplained_attn)
+
+fig, ax1 = plt.subplots(figsize=(6, 3))
+ax2 = ax1.twinx()
+sns.scatterplot(
+    y = explained_attn,
+    x = np.arange(num_heads),
+    label="Explained Attention",
+    marker='o',
+    color='blue',
+    s=100,
+    ax=ax1
+)
+sns.scatterplot(
+    y = unexplained_attn,
+    x = np.arange(num_heads),
+    label="Unexplained Attention",
+    marker='x',
+    color='red',
+    s=100,
+    ax=ax1
+).set(
+    ylim=(0, 1),
+)
+plt.xticks(np.arange(num_heads), [f"Head {i}" for i in range(num_heads)], rotation=45)
+
 
 def explained_attn_score(
     gt_attn: Float[Tensor, "*batch n_head seq seq"], 
@@ -204,12 +267,127 @@ def explained_attn_score(
     surprise = - prob_q.log()
     return surprise.mean(dim=-1)
 
-plt.plot(explained_attn_score(gt_attn.unsqueeze(0), attn)[0].numpy(force=True)
+sns.scatterplot(
+    y = explained_attn_score(gt_attn.unsqueeze(0), attn)[0].numpy(force=True),
+    x = np.arange(num_heads),
+    label="Unexplained Attention Score",
+    marker='*',
+    color='green',
+    s=100,
+    ax=ax2
+).set(
+    ylim=(0, 3),
 )
+
+# %%
+def get_explained_attention_scores(model, tokens, gt_attn_pattern):
+    """
+    Calculate explained attention scores for each head in each layer.
+    
+    Args:
+        model: The transformer model
+        tokens: Input token ids
+        gt_attn_pattern: Ground truth attention pattern to check against
+        
+    Returns:
+        explained_scores: Dictionary with layer -> head -> score mapping
+    """
+    # Run the model with caching
+    _, cache = model.run_with_cache(tokens, remove_batch_dim=True)
+    
+    # Get the number of layers and heads
+    n_layers = model.cfg.n_layers
+    n_heads = model.cfg.n_heads
+    
+    # Store results
+    explained_scores = {}
+    
+    # Iterate through all layers
+    for layer in range(n_layers):
+        explained_scores[layer] = {}
+        layer_attn_patterns = cache["pattern", layer]
+        
+        # Iterate through all heads in the layer
+        for head in range(n_heads):
+            head_attn = layer_attn_patterns[head]
+            
+            # Calculate explained attention score
+            score = explained_attn_score(
+                head_attn.unsqueeze(0).unsqueeze(0),  # Add batch and head dimensions
+                gt_attn_pattern
+            )[0, 0].item()  # Extract the scalar value
+            
+            explained_scores[layer][head] = score
+            
+    return explained_scores
+
+# Generate a test prompt and ground truth attention
+test_prompt, test_attn = build_prompt(seq_len=255)
+
+# Convert to tokens
+test_tokens = model.tokenizer(test_prompt).input_ids
+test_tokens = list(chain(*test_tokens))
+if test_tokens[0] != model.tokenizer.bos_token_id:
+    test_tokens.insert(0, model.tokenizer.bos_token_id)
+test_tokens = torch.tensor(test_tokens, device=device)
+
+# Get scores
+scores = get_explained_attention_scores(model, test_tokens, test_attn.to(device))
+
+# Convert to dataframe for visualization
+score_data = []
+for layer, heads in scores.items():
+    for head, score in heads.items():
+        score_data.append({
+            'layer': layer,
+            'head': head,
+            'score': score
+        })
+import pandas as pd
+score_df = pd.DataFrame(score_data)
+# Plot as heatmap
+plt.figure(figsize=(10, 8))
+pivot_data = score_df.pivot(index='layer', columns='head', values='score')
+
+# Create a mask to highlight head 5 in layer 1
+highlight_mask = np.zeros_like(pivot_data, dtype=bool)
+highlight_mask[1, 5] = True
+
+# Create the heatmap with a border around the highlighted cell
+sns.heatmap(pivot_data, annot=True, fmt='.1f', cmap='rocket_r', vmax=5)
+
+# Add a red border around head 5 in layer 1
+plt.plot([5, 6, 6, 5, 5], [1, 1, 2, 2, 1], linewidth=3, color='green')
+
+# Add an arrow pointing to the highlighted cell
+plt.annotate('Target Head (L1H5)', xy=(5.5, 1.5), xytext=(6.5, 4), color='white',
+             arrowprops=dict(facecolor='white', shrink=0.1, width=2, headwidth=8, connectionstyle="arc3,rad=-0.2"),
+             fontsize=20, fontweight='bold')
+
+plt.title('Surprisal by Layer and Head', fontsize=18)
+plt.xlabel('Head', fontsize=16)
+plt.ylabel('Layer', fontsize=16)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.tight_layout()
+plt.show()
+
+# # Plot top and bottom heads
+# top_heads = score_df.nsmallest(10, 'score')
+# plt.figure(figsize=(10, 6))
+# sns.barplot(data=top_heads, x='score', y=top_heads.apply(lambda x: f"L{x['layer']}H{x['head']}", axis=1))
+# plt.title('Top 10 Heads by Explained Attention Score (lower is better)')
+# plt.xlabel('Score')
+# plt.ylabel('Layer.Head')
+# plt.tight_layout()
+# plt.show()
+
 
 # %%
 from tqdm import tqdm
 from functools import partial
+import seaborn as sns
+import pandas as pd
 
 def ablate_component(
     t : Float[Tensor, "batch pos d_model"],
@@ -247,10 +425,11 @@ def ablate_metric(
         'blocks.0.hook_attn_out',
         'blocks.0.hook_mlp_out',
         'blocks.0.hook_mlp_resid',
-        'blocks.2.hook_mlp_out',
+        # 'blocks.2.hook_mlp_out',
         'None'
     ]
     results = dict()
+    full_res = dict()
     out_hook = "blocks.1.attn.hook_pattern"
     
     # Hook function to cache activations
@@ -280,10 +459,11 @@ def ablate_metric(
         
         res = metric(cache)
         results[component] = (res.mean().item(), res.std().item())
+        full_res[component] = res.numpy(force=True)
         del cache
 
     model.reset_hooks()
-    return results
+    return results, full_res
 
 # %% 
 BATCH_SIZE = 128 
@@ -309,24 +489,56 @@ batch = batch.to(device)
 attn_batch = attn_batch.to(device)
 # %%
 
-res = ablate_metric(
+_, res = ablate_metric(
     model,
     batch,
     partial(explained_attn_score_metric, pred_attn=attn_batch)
 )
+# %%
 
 # Unpack means and stds for each component
-components = list(res.keys())
-means = [res[c][0] for c in components]
-stds = [res[c][1] for c in components]
+# components = list(res.keys())
+# means = np.array([res[c][0] for c in components])
+# stds = np.array([res[c][1] for c in components])
+data = pd.DataFrame(res)
+# This reshapes your data for easier plotting
+melted_data = data.melt(var_name='component', value_name='value')
+melted_data = melted_data.dropna()
+melted_data = melted_data[melted_data['component'] != 'None']
 
-plt.figure(figsize=(8, 5))
-plt.barh(components, means, xerr=stds, color="skyblue", ecolor="gray")
-plt.xlabel("Explained Attention Score (mean ± std)")
-plt.title("Component Ablation Effect on Head 1.5")
+plt.figure(figsize=(6, 8))
+sns.set_theme(style="white")
+# sns.boxplot(data=melted_data, y='component', x='value', hue='component',)
+sns.boxplot(data=melted_data, x='component', y='value', hue='component',palette='icefire')
+
+# Add a vertical line for the 'None' baseline
+if 'None' in data.columns:
+    baseline_value = data['None'].mean()
+    # Get current palette's first color for consistency
+    current_palette = sns.color_palette('Set2')
+    baseline_color = current_palette[-2]  # Use first color from the palette
+    plt.axhline(y=baseline_value, color=baseline_color, linestyle='-.', linewidth=2,
+                label=f"No Ablation")
+    plt.legend()
+
+plt.title('Influence of Components on L1H5')
+plt.ylabel('Semantic Category Score')
+plt.xlabel('Ablated Component')
+plt.grid(axis='y', alpha=0.3)  # Changed from axis='y' to axis='x'
+plt.xticks(np.arange(0,5), [
+    'Embed',
+    'Pos Embed',
+    'Attn L0',
+    'MLP L0',
+    'MLP Resid L0',
+])
+# Add annotation arrow indicating importance
+plt.annotate('Higher is\nmore important', xy=(-0.2, 1.2), xytext=(-0.2, 0.8), 
+             arrowprops=dict(facecolor='black', shrink=0.01, width=3, headwidth=7),
+             ha='center', va='center', fontsize=12,
+             fontweight='bold', rotation=90)
 plt.tight_layout()
 plt.show()
-
 # %% [markdown]
 # ## Comment:
 # Components important for the head 1.5:
