@@ -200,8 +200,11 @@ str_tokens = model.tokenizer.convert_ids_to_tokens(toks)
 for layer in [LAYER]:
     print("Layer:", layer)
     attention_pattern = cache["pattern", layer]
-    display(cv.attention.attention_patterns(tokens=str_tokens, attention=attention_pattern))
-
+    a = cv.attention.attention_patterns(tokens=str_tokens, attention=attention_pattern)
+    
+    # display(a)
+    with open("attention_pattern.html", "w") as f:
+        f.write(a.show_code())
 
 # %%
 attn = attn.to(device)
