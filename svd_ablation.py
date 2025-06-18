@@ -503,6 +503,10 @@ get_best_matches(
 )
 
 # %%
+E = attn_in[group_toks].clone().detach()
+W_QK = W_Q @ W_K.T
+W_sym = (W_QK + W_QK.T) / 2
+W_skew = (W_QK - W_QK.T) / 2
 # Get eigenvalues and eigenvectors of symmetric matrix
 S, Q = torch.linalg.eigh(W_sym)
 
@@ -516,7 +520,7 @@ S = S[:64]  # Zero out noise components since W has rank 64
 Q = Q[:, :64]  # Keep only the first 64 eigenvectors
 # Create a figure with subplots for different scaling values
 # Create a figure with subplots for different scaling values
-scaling_values = [0.5, 0, -1]
+scaling_values = [1.1, 0, -0.5]
 titles = [f"Scale negative eigenvalues by {s}" if s != 0 else "Zero out negative eigenvalues" for s in scaling_values]
 
 fig, axes = plt.subplots(1, len(scaling_values), figsize=(20, 6))
@@ -541,13 +545,84 @@ for i, (scale, title) in enumerate(zip(scaling_values, titles)):
         ax=axes[i],
         xticklabels=False,
         yticklabels=False,
+        # vmax=60
     )
     axes[i].set_title(title)
 
+    
 plt.tight_layout()
 plt.show()
+# %%
+bos_emb = attn_in[-1]
+other_emb = attn_in[:-2].mean(dim=0)  # Average of the first 1000 tokens
+
+
+neg_eigenvectors = []
+neg_eigenvalues = []
+
+# Find negative eigenvalues and their eigenvectors
+for i, s in enumerate(S):
+    if s < 0:
+        neg_eigenvectors.append(Q[:,i])
+        neg_eigenvalues.append(s.item())
+        
+        # Calculate cosine similarity with BOS and other embedding
+        bos_cos_sim = torch.nn.functional.cosine_similarity(bos_emb, Q[:,i], dim=0)
+        other_cos_sim = torch.nn.functional.cosine_similarity(other_emb, Q[:,i], dim=0)
+        
+        print(f"Eigenvalue {i}: {s:.4f}")
+        print(f"  - Cosine similarity with BOS embedding: {bos_cos_sim:.4f}")
+        print(f"  - Cosine similarity with other embedding: {other_cos_sim:.4f}")
+        print(f"  - Difference: {(bos_cos_sim - other_cos_sim):.4f}")
+
+# Make a comparison plot
+if neg_eigenvectors:
+    plt.figure(figsize=(12, 6))
+    
+    # Convert to tensors for vectorized computation
+    neg_eigenvectors_tensor = torch.stack(neg_eigenvectors, dim=1)
+    
+    # Calculate cosine similarities for both embeddings with all negative eigenvectors
+    bos_sims = torch.nn.functional.cosine_similarity(
+        bos_emb.unsqueeze(1).expand(-1, neg_eigenvectors_tensor.shape[1]), 
+        neg_eigenvectors_tensor, 
+        dim=0
+    )
+    
+    other_sims = torch.nn.functional.cosine_similarity(
+        other_emb.unsqueeze(1).expand(-1, neg_eigenvectors_tensor.shape[1]), 
+        neg_eigenvectors_tensor, 
+        dim=0
+    )
+    
+    # Create boxplot data
+    boxplot_data = [
+        bos_sims.cpu().numpy(),
+        other_sims.cpu().numpy()
+    ]
+    
+    # Create boxplot
+    bp = plt.boxplot(boxplot_data, labels=['BOS embedding', 'Other embedding'], patch_artist=True)
+    
+    # Customize boxplot colors
+    colors = ['lightblue', 'lightgreen']
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+    
+    plt.title('Cosine Similarity with Negative Eigenvectors')
+    plt.ylabel('Cosine Similarity')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Add scatter points for individual values
+    for i, data in enumerate([bos_sims.cpu().numpy(), other_sims.cpu().numpy()]):
+        x = np.random.normal(i+1, 0.04, size=len(data))
+        plt.scatter(x, data, alpha=0.6, s=20, c='darkblue')
+    
+    plt.tight_layout()
+
 
 # %%
+
 S, Q = torch.linalg.eig(W_QK)
 S = S[:64]  # Zero out noise components since W has rank 64
 # Q = Q[:, :64]  # Keep only the first 64 eigenvectors

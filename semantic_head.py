@@ -514,10 +514,10 @@ melted_data = data.melt(var_name='component', value_name='value')
 melted_data = melted_data.dropna()
 melted_data = melted_data[melted_data['component'] != 'None']
 
-plt.figure(figsize=(6, 8))
+plt.figure(figsize=(12,5))
 sns.set_theme(style="white")
 # sns.boxplot(data=melted_data, y='component', x='value', hue='component',)
-sns.boxplot(data=melted_data, x='component', y='value', hue='component',palette='icefire')
+sns.boxplot(data=melted_data, y='component', x='value', hue='component', palette='icefire')
 
 # Add a vertical line for the 'None' baseline
 if 'None' in data.columns:
@@ -525,26 +525,27 @@ if 'None' in data.columns:
     # Get current palette's first color for consistency
     current_palette = sns.color_palette('Set2')
     baseline_color = current_palette[-2]  # Use first color from the palette
-    plt.axhline(y=baseline_value, color=baseline_color, linestyle='-.', linewidth=2,
+    plt.axvline(x=baseline_value, color=baseline_color, linestyle='-.', linewidth=2,
                 label=f"No Ablation")
-    plt.legend()
+    plt.legend(fontsize=14)
 
-plt.title('Influence of Components on L1H5')
-plt.ylabel('Semantic Category Score')
-plt.xlabel('Ablated Component')
-plt.grid(axis='y', alpha=0.3)  # Changed from axis='y' to axis='x'
-plt.xticks(np.arange(0,5), [
+plt.title('Influence of components on L1H5', fontsize=18, fontweight='bold')
+plt.xlabel('Semantic Category Score', fontsize=16)
+plt.ylabel('Ablated Component', fontsize=16)
+plt.grid(axis='x', alpha=0.3)  # Changed from axis='y' to axis='x'
+plt.yticks(np.arange(0,5), [
     'Embed',
     'Pos Embed',
     'Attn L0',
     'MLP L0',
     'MLP Resid L0',
-])
+], fontsize=14)
+plt.xticks(fontsize=14)
 # Add annotation arrow indicating importance
-plt.annotate('Higher is\nmore important', xy=(-0.2, 1.2), xytext=(-0.2, 0.8), 
+plt.annotate('more important', xy=(1.25, -0.2), xytext=(0.8, -0.2), 
              arrowprops=dict(facecolor='black', shrink=0.01, width=3, headwidth=7),
-             ha='center', va='center', fontsize=12,
-             fontweight='bold', rotation=90)
+             ha='center', va='center', fontsize=14,
+            rotation=0)
 plt.tight_layout()
 plt.show()
 # %% [markdown]
