@@ -84,9 +84,11 @@ KEYWORDS = {
     "colors": ["blue", "red", "green", "yellow", "purple"],
     "animals": ["dog", "cat", "mouse", "horse", "sheep"],
     # "fruits": ["apple", "banana", "grape", "peach", "lemon"],
+    'days': ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+    'years': ["1989", "1999", "1972", "1963", "1978"],
     "emotions": ["happy", "sad", "angry", "scared", "proud"],
     # "weather": ["rain", "snow", "wind", "storm", "sun"],
-    "numbers": ["2", "69", "4", "22", "32", "50"]
+    "numbers": ["24", "69", "42", "22", "32", "50"]
 }
 
 def build_prompt(seq_len=64) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
@@ -144,7 +146,8 @@ def build_prompt(seq_len=64) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
     
     return constructed_prompt, attention_pattern
 
-prompt, attn = build_prompt(seq_len=127)
+random.seed(42)  # For reproducibility
+prompt, attn = build_prompt(seq_len=63)
 attn.sum(dim=-1)    
 # %%
 # Plot attention as a heatmap with corresponding tokens
@@ -180,12 +183,14 @@ plt.legend(
 )
 
 # Add title
-plt.title("Empirically Observed Attention Pattern")
+plt.title("Expected Attention Pattern")
 
 # Adjust layout
 plt.tight_layout()
 plt.show()
 # %%
+# prompt, attn = build_prompt(seq_len=31)
+
 toks = model.tokenizer(prompt).input_ids
 toks = list(chain(*toks))
 if toks[0] != model.tokenizer.bos_token_id:
@@ -203,7 +208,7 @@ for layer in [LAYER]:
     a = cv.attention.attention_patterns(tokens=str_tokens, attention=attention_pattern)
     
     # display(a)
-    with open("attention_pattern.html", "w") as f:
+    with open("docs/attention_pattern.html", "w") as f:
         f.write(a.show_code())
 
 # %%
