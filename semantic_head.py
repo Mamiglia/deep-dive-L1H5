@@ -2,10 +2,20 @@
 from typing import Callable
 from matplotlib import pyplot as plt
 import torch
+from torch import Tensor
 import numpy as np
-from transformer_lens import ActivationCache, HookedTransformer, utils
-from transformer_lens.components import MLP, Embed, LayerNorm, Unembed
+
+from transformer_lens import HookedTransformer, ActivationCache
 from transformer_lens.hook_points import HookPoint
+import seaborn as sns
+from itertools import chain
+from jaxtyping import Float, Int
+import circuitsvis as cv
+
+from src.utils import load_model_sae
+from src.prompt import random_toks_with_keywords, build_prompt
+from src.metrics import explained_attn_score
+from src.constants import KEYWORDS
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
 
@@ -14,18 +24,9 @@ from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_direc
 from IPython.display import HTML, IFrame, clear_output, display
 
 import torch.nn.functional as F
-import random
-import seaborn as sns
-from itertools import chain
-
-from jaxtyping import Float, Int
-import circuitsvis as cv
 
 # %load_ext autoreload
 # %autoreload 2
-
-from src.maps import *
-from src.utils import *
 
 LAYER = 1
 HEAD_IDX= 5
@@ -34,7 +35,6 @@ HOOK_POINT = f"blocks.{LAYER-1}.hook_resid_post"
 # %%
 
 model, sae, d_sae, d_model = load_model_sae(sae_id=HOOK_POINT)
-W_KQ = get_kq(model, layer=LAYER, head_idx=HEAD_IDX)
 text, _ = random_toks_with_keywords(model, "colors")
 _, cache = model.run_with_cache(text, remove_batch_dim=True)
 seq_len = text.shape[-1]
@@ -80,137 +80,7 @@ attn = F.softmax(attn, dim=-1)
 
 display(cv.attention.attention_patterns(tokens=str_tokens, attention=attn.unsqueeze(0)))
 # %%
-KEYWORDS = {
-    "colors": ["blue", "red", "green", "yellow", "purple"],
-    "animals": ["dog", "cat", "mouse", "horse", "sheep"],
-    # "fruits": ["apple", "banana", "grape", "peach", "lemon"],
-    'days': ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-    'years': ["1989", "1999", "1972", "1963", "1978"],
-    "emotions": ["happy", "sad", "angry", "scared", "proud"],
-    # "weather": ["rain", "snow", "wind", "storm", "sun"],
-    "numbers": ["24", "69", "42", "22", "32", "50"]
-}
-
-def build_prompt(seq_len=64) -> Tuple[list[str], Int[Tensor, "seq seq"]]:
-    """Build a prompt of randomly sampled tokens from categories by shuffling them together.
-
-    The tokens are sampled from the global KEYWORDS dictionary. The prompt
-    is a list of strings (tokens). The expected attention pattern indicates
-    which tokens in the prompt belong to the same category and are therefore
-    expected to attend to each other.
-
-    Args:
-        seq_len (int, optional): The desired length of the token sequence in the prompt. Defaults to 64.
-
-    Returns:
-        tuple: A tuple containing:
-            - constructed_prompt (list[str]): A list of token strings forming the prompt.
-            - attention_pattern (Tensor): An N x N matrix (where N is seq_len)
-              representing the expected attention. A[i][j] is 1 if tokens at
-              position i and j in the prompt belong to the same category, else 0.
-              Returns empty lists if seq_len is 0 or KEYWORDS is empty.
-    """
-    if seq_len == 0 or not KEYWORDS:
-        return [], torch.tensor([])
-
-    category_list = list(KEYWORDS.keys())
-    constructed_prompt = []
-    category_assignments = []
-
-    # Randomly sample tokens to fill the prompt
-    while len(constructed_prompt) < seq_len:
-        category = random.choice(category_list)
-        token = random.choice(KEYWORDS[category])
-        constructed_prompt.append(' '+ token)
-        category_assignments.append(category)
-
-    # Trim if over
-    constructed_prompt = constructed_prompt[:seq_len]
-    category_assignments = category_assignments[:seq_len]
-
-    # Build attention pattern
-    attention_pattern = torch.zeros(seq_len+1, seq_len+1, dtype=torch.int)
-
-    for i in range(1,seq_len):
-        for j in range(1,seq_len):
-            if category_assignments[i-1] == category_assignments[j-1]:
-                attention_pattern[i, j] = constructed_prompt[i-1] != constructed_prompt[j-1]
-                
-    # if no attn then attend <bos>
-                
-    # Mask attention
-    mask = torch.triu(attention_pattern>0, 0)
-    attention_pattern[mask] = 0
-    
-    attention_pattern[:,0][attention_pattern.sum(dim=-1) == 0] = 1
-    
-    return constructed_prompt, attention_pattern
-
-random.seed(42)  # For reproducibility
-prompt, attn = build_prompt(seq_len=63)
-attn.sum(dim=-1)    
-# %%
-# Plot attention as a heatmap with corresponding tokens
-fig, ax = plt.subplots(figsize=(6,6))
-
-# Create a masked version of the attention matrix
-masked_attn = attn.clone().float()
-# Get upper triangular indices (including diagonal)
-mask = torch.triu(torch.ones_like(masked_attn, dtype=torch.bool), diagonal=1)
-# Replace upper triangular values with NaN to make them white in the plot
-masked_attn[mask] = float('nan')
-# Plot with seaborn for improved aesthetics
-tokens_to_show = ['<bos>'] + [t.replace('Ġ', ' ') for t in prompt]  # Replace tokenizer prefix if needed
-# Create a colormap instance for consistent coloring in both heatmap and legend
-cmap = sns.color_palette("berlin", as_cmap=True)
-
-# Create the heatmap
-sns.heatmap(masked_attn.numpy(), 
-            cmap=cmap, 
-            mask=np.isnan(masked_attn.numpy()),
-            vmin=0, 
-            vmax=1, 
-            xticklabels=tokens_to_show,
-            yticklabels=tokens_to_show,
-            ax=ax, cbar=False)
-
-# Customize the legend
-plt.legend(
-    handles=[plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=cmap(cmap.N), markersize=12, label='Attended'),
-             plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=cmap(0), markersize=12, label='Not Attended')],
-    loc='upper right',
-    title='Attention Status'
-)
-
-# Add title
-plt.title("Expected Attention Pattern")
-
-# Adjust layout
-plt.tight_layout()
-plt.show()
-# %%
-# prompt, attn = build_prompt(seq_len=31)
-
-toks = model.tokenizer(prompt).input_ids
-toks = list(chain(*toks))
-if toks[0] != model.tokenizer.bos_token_id:
-    toks.insert(0, model.tokenizer.bos_token_id)
-toks = torch.tensor(toks)
-
-_, cache = model.run_with_cache(toks, remove_batch_dim=True)
-
-seq_len = text.shape[-1]
-
-str_tokens = model.tokenizer.convert_ids_to_tokens(toks)
-for layer in [LAYER]:
-    print("Layer:", layer)
-    attention_pattern = cache["pattern", layer]
-    a = cv.attention.attention_patterns(tokens=str_tokens, attention=attention_pattern)
-    
-    # display(a)
-    with open("docs/attention_pattern.html", "w") as f:
-        f.write(a.show_code())
-
+# local KEYWORDS & build_prompt/tokenize_prompt replaced by src.prompt imports
 # %%
 attn = attn.to(device)
 gt_attn = cache["pattern", layer].to(device)
@@ -558,4 +428,3 @@ plt.show()
 # Why does it attend to the <bos> token when no other token of the same semantic group is present?
 #
 # Why does it not attend to itself or other occurences of the same token?
-# %%

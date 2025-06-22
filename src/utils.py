@@ -16,6 +16,8 @@ from transformer_lens import (
 from transformers import PreTrainedTokenizerBase
 from rich.table import Table
 from rich.console import Console
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
@@ -25,6 +27,21 @@ from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_direc
 from IPython.display import HTML, IFrame, clear_output, display
 
 import torch.nn.functional as F
+
+def barplot(values, **set_args):
+    plt.figure(figsize=(16,8))
+    ax = sns.barplot(values.numpy(force=True))
+    ax.set_xticks([])  # Remove x-axis ticks
+    if set_args:
+        ax.set(**set_args)
+    for i, v in enumerate(values.numpy(force=True)):
+        ax.text(i, v * 1.1,  str(i), ha='center', va='bottom', fontsize=10)
+    return ax
+
+def clean_mem():
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
 
 def display_dashboard(
     sae_release="gpt2-small-resid-post-v5-32k",
@@ -174,6 +191,38 @@ KEYWORDS = {
     "weather": ["rain", "snow", "wind", "storm", "sun"],
 }
 
+GROUP_TOKENS = [
+    ' Monday', # week days
+    ' Tuesday',
+    ' Wednesday',
+    ' Thursday',
+    ' Friday', 
+    ' Saturday',
+    ' red',
+    ' blue', 
+    ' Blue',
+    ' green',
+    ' silver', 
+    ' White', 
+    ' 1918', # years
+    ' 1920',
+    ' 1930',	
+    ' 1943', 
+    ' 1998',
+    ' 2000',
+    ' You', # pronouns
+    ' He',
+    ' his',
+    ' she',
+    ' her',
+    ' their',
+    ' Italy', # countries
+    ' Iceland', 
+    ' Austria',
+    ' Mexico',
+    ' Spain', 
+    ' France', 
+]
 
 
 def get_most_attended_tokens(token:str, attn:Tensor, tokenizer: PreTrainedTokenizerBase, k=16):
@@ -198,3 +247,117 @@ def display_most_attended_tokens(tokens, attn, tokenizer:PreTrainedTokenizerBase
         )
     console = Console()
     console.print(table)
+
+
+def ablate_component_mean(
+    t : Float[Tensor, "batch pos d_model"],
+    hook: HookPoint,
+):
+    """Mean-ablate a component"""
+    return t.mean(dim=(0,1))
+
+def stop_computation(t, hook):
+    raise StopIteration(f"Stopping model mid-execution at {hook.name}")
+
+def ablate_shorten_sequence(
+    t : Float[Tensor, "batch pos d_model"],
+    hook: HookPoint,
+    max_length: int = 1024
+):
+    print(hook.name)
+    return t[:,:max_length,:]
+
+@torch.inference_mode()
+def get_vocab_attn1_input(
+    model: HookedTransformer,
+) -> Float[Tensor, "vocab d_model"]:
+    """
+    Computes the layer-normed residual stream vectors for each token in the vocabulary,
+    as input to a specific layer's attention mechanism. This is done by running
+    the model on all tokens and stopping it right before the target layer's
+    attention block.
+    """
+    model.reset_hooks()
+    vocab = torch.arange(0, model.tokenizer.vocab_size, device=device)
+    ablate_components = [
+        'hook_pos_embed',  # Position embeddings
+        'blocks.0.hook_attn_out', # Attention-0 output
+    ]
+    # This dict will store the cached activations
+    activation_cache = {}
+    
+    out_hook = 'blocks.1.ln1.hook_normalized' # input to the Attention-1 (after LayerNorm)
+
+    # Hook function to cache activations
+    def cache_hook(activation, hook):
+        activation_cache[hook.name] = activation
+
+    hooks = [
+        ('blocks.0.ln1.hook_normalized', ablate_shorten_sequence),  # shorten input of attn-0
+        (out_hook, cache_hook), 
+        (out_hook, stop_computation),  
+    ]
+    for component in ablate_components:
+        hooks.append((component, ablate_component_mean))
+        
+    print(hooks)
+    try:
+        model.run_with_hooks(vocab, fwd_hooks=hooks)
+    except StopIteration as e:
+        print(e)
+
+    model.reset_hooks()
+    return activation_cache[out_hook][0,:]
+
+@torch.no_grad()
+def compute_rank(attn: Float[Tensor, "seq seq"]) -> tuple[Int[Tensor, "seq"], Int[Tensor, "seq seq"]]:
+    """Returns the rank of the diagonal element among all the other elements of the attention matrix using torch only (CPU)."""
+    dev = attn.device
+    attn = attn.to('cpu')
+    # Get the sorted indices for each row (descending order)
+    sorted_attn = torch.argsort(attn, dim=-1, descending=True)
+    # For each row, find the rank (position) of the diagonal element
+    seq_len = attn.size(0)
+    idx = torch.arange(seq_len, device=dev)
+    sorted_attn = sorted_attn.to(dev)
+    # For each row, where is the diagonal index in the sorted list?
+    rank = (sorted_attn == idx.unsqueeze(1)).nonzero(as_tuple=False)[:, 1]
+    return rank, sorted_attn
+
+def mrr(rank: Int[Tensor, "seq"]) -> float:
+    """Computes the Mean Reciprocal Rank given the rank of the diagonal elements"""
+    return (1 / (rank + 1)).mean().item()
+
+def accuracy_k(rank: Int[Tensor, "seq"], k=32) -> float:
+    """Computes the accuracy at k given the rank of the diagonal elements"""
+    return (rank < k).float().mean().item()
+
+def precision_k(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq seq"], k : int = 128):
+    "computes how many relevant items are retrieved within the top-k"
+    seq_len = pred_sorted.size(0)
+    return (((pred_sorted < k) * (gt_sorted < k)).sum() / k / seq_len).item()
+
+def rank_increase(rank: Int[Tensor, "seq"], base_rank: Int[Tensor, "seq"]) -> float:
+    """Computes the rank increase given the rank of the diagonal elements"""
+    return (base_rank - rank).float().mean().item()
+
+def spearman(pred_sorted: Int[Tensor, "seq seq"], gt_sorted: Int[Tensor, "seq seq"]) -> float:
+    """Computes the row-wise correlation coefficient between the predicted and ground truth ranks"""
+    # sequence length
+    seq_len = pred_sorted.size(-1)
+
+    # prepare rank matrices
+    device = pred_sorted.device
+    idx = torch.arange(seq_len, device=device).unsqueeze(0).expand(pred_sorted.size(0), -1)  # (seq, seq)
+    pred_ranks = torch.zeros_like(pred_sorted, device=device)
+    gt_ranks   = torch.zeros_like(gt_sorted, device=device)
+    # scatter the rank positions
+    pred_ranks.scatter_(1, pred_sorted, idx)
+    gt_ranks.scatter_(1,   gt_sorted,   idx)
+    # compute squared differences of ranks
+    d2 = (pred_ranks - gt_ranks).pow(2).sum(dim=1)  # sum over each row
+    # spearman formula per row: ρ = 1 − (6 * Σd²) / [n(n²−1)]
+    n = seq_len
+    rho = 1 - (6 * d2) / (n * (n*n - 1))
+    # return mean over rows as Python float
+    return rho.mean().item()

@@ -1,121 +1,52 @@
-# Feature-Space Attention Analysis
+# Investigating Semantic Attention in gpt2-small's Head L1H5
 
-**Research Question**: *Are attention heads meaningful in the feature space?*
+This repository contains the code and analysis for a research project investigating the unusual behavior of attention head L1H5 in gpt2-small. This head demonstrates a unique ability to attend to semantically similar tokens while actively suppressing self-attention, seemingly independent of positional information.
 
-This repository explores whether transformer attention mechanisms can be better understood by analyzing them through the lens of learned features from Sparse Autoencoders (SAEs), rather than at the token level.
+The goal of this project is to provide a mechanistic explanation for this behavior and to develop generalizable techniques for analyzing attention patterns in Large Language Models (LLMs).
+## Core Concepts and Research Focus
 
-## 🎯 Core Hypothesis
+Our investigation into gpt2-small's attention head L1H5 reveals a fascinating mechanism: it selectively attends to semantically related tokens while actively suppressing self-attention. This behavior follows three simple rules:
 
-Traditional attention analysis focuses on *which tokens attend to which tokens*. We propose analyzing *which semantic features attend to which semantic features*. If attention heads are truly meaningful computational units, their behavior should decompose cleanly into interpretable feature-to-feature relationships.
+1.  **Semantic Clustering**: Tokens attend to others in the same semantic category (e.g., `cat` to `dog`, `red` to `blue`).
 
-## 🔬 Methodology
+2.  **Self-Suppression**: Tokens do not attend to themselves or other instances of the same token.
 
-### Mathematical Foundation
+3.  **Fallback to Beginning**: If no other in-category tokens are present, attention falls back to the `<bos>` (beginning of sequence) token.
 
-For any attention head, the attention pattern is fundamentally:
-```
-A = softmax(Q K^T) = softmax((W_q x)(W_k x)^T) = softmax(x^T W_k^T W_q x)
-```
+The core of this research involves:
 
-We define the **attention projection matrix** as:
-```
-M = W_k^T W_q
-```
+-   **Characterizing the Behavior**: Designing prompts and metrics to reliably trigger and measure L1H5's unique attention patterns.
 
-This matrix captures the core "matching" behavior of attention - how the model maps from "what I am" (key) to "what I'm looking for" (query).
+-   **Component Ablation**: Identifying which parts of the model (e.g., token embeddings, MLP layers) are crucial for this specific head's function, notably observing its independence from positional information.
 
-### Feature-Space Decomposition
+-   **Mechanism Discovery**: Decomposing the attention head's QK circuit (`W_QK`) into symmetric and skew-symmetric parts to pinpoint how self-suppression is achieved. Our findings suggest that negative eigenvalues within the symmetric component play a key role.
 
-Using Sparse Autoencoders trained on transformer activations, we decompose attention into feature-level interactions:
+-   **Causal Steering**: Demonstrating direct control over the self-suppression behavior by manipulating these negative eigenvalues or using gradient-based methods, which validates our mechanistic hypothesis.
 
-1. **Extract features**: `f = SAE.encode(x)` 
-2. **Project through attention**: `f_projected = SAE.encode(M @ x)`
-3. **Analyze feature-feature attention**: Which features in `f` correspond to which features in `f_projected`?
+This repository provides the computational framework and analysis scripts to reproduce and extend these findings.
+## Project Structure
 
-### Key Insights We're Testing
+A brief overview of each analysis script:
 
-- **Identity-like attention** (`M ≈ I`): Features attend to themselves
-- **Semantic clustering** (`M ≈ I_r, r<d`): Features attend to semantically similar features  
-- **Cross-semantic attention** (`M ≠ I`): Complex feature transformations drive attention
+- **characterize_head.py**: Examine L1H5’s semantic attention via custom prompts and visualize patterns.
+- **component_ablation.py**: Ablate embeddings, MLPs, and attention to identify components critical for L1H5.
+- **clustering.py**: Cluster tokens based on L1H5 attention similarities and generate community graphs.
+- **cosine_attention_analysis.py**: Relate attention scores to cosine similarity of token embeddings.
+- **gradient_steering.py**: Steer self-attention behavior by gradient-based updates to Q/K weights.
+- **skew_analysis.py**: Decompose W_QK into symmetric/skew parts to understand self-suppression mechanisms.
+- **svd_sym_skew_heatmap.py**: Visualize heatmaps of symmetric vs. skew-symmetric attention components.
+- **svd_rank_ablation.py**: Measure effects of manipulating top singular values on attention rank metrics.
+- **svd_group_scaling_heatmap.py**: Scale eigenvalues for group tokens and plot resulting heatmaps.
+- **semantic_head.py**: Initial exploratory analysis of semantic attention using Sparse Autoencoders.
+- **token_freq.py**: Compute GPT-2 token frequencies for vocabulary selection.
 
-## 🛠️ Implementation
+## Installation and Usage
 
-### Core Functions
+To run the code in this repository, you'll need Python and the necessary machine learning and scientific computing libraries.
+### Prerequisites
 
-**`src/maps.py`**: Feature-space attention mapping
-- `feat_attn_scores_q()`: Computes which features a source feature attends to
-- `feat_attn_scores_k()`: Computes which features attend to a destination feature
-- `sae_decode()`: Converts feature indices back to activation space
-
-**`src/utils.py`**: Model and data utilities
-- `load_model_sae()`: Loads GPT-2 models with pre-trained SAEs
-- `get_kq()`: Extracts W_K^T W_Q matrix for specific attention heads
-- `display_dashboard()`: Interactive feature visualization via Neuronpedia
-
-### Current Analysis Pipeline
-
-```python
-# Load model and SAE
-model, sae, d_sae, d_model = load_model_sae(sae_id="blocks.4.hook_resid_post")
-
-# Extract attention projection matrix
-W_KQ = get_kq(model, layer=5, head_idx=7)
-
-# Run forward pass
-logits, cache = model.run_with_cache("Mary gave John a book because she was leaving.")
-
-# Extract residual stream activations
-resid = cache["blocks.4.hook_resid_post"]
-
-# Compute feature-level attention projections
-feat_attn = token2feat_attn(resid, sae, W_KQ)
-
-# Analyze: which features does "she" attend to?
-she_token_idx = -4
-predicted_features = topk_feats(feat_attn[she_token_idx], k=12)
+Standard Python libraries for deep learning, natural language processing, data analysis, and visualization. You can install them via pip:
+```bash
+pip install torch transformer_lens sae_lens numpy pandas seaborn matplotlib scikit-learn rich circuitsvis leidenalg igraph tqdm
 ```
 
-## 🔍 Current Findings
-
-### Preliminary Results
-
-From `scratch.py` analysis on the sentence *"Mary gave John a book because she was leaving"*:
-
-- **Token-level attention**: Standard attention visualization shows expected patterns
-- **Feature-level predictions**: Our method predicts which features the model should attend to
-- **Validation**: Comparing predicted attention targets vs. actual attention targets in feature space
-
-### Key Observations
-
-1. **Feature overlap**: Measuring intersection between predicted destination features and actual destination features
-2. **Attention head specificity**: Different heads show different patterns of feature-to-feature attention
-3. **LayerNorm effects**: Need to account for normalization in attention computation
-
-## 🚧 Current Challenges
-
-### Technical Issues
-
-- **LayerNorm complications**: `softmax(LN(x)^T M LN(x))` breaks clean algebraic decomposition
-- **SAE completeness**: Pre-trained SAEs may not capture all attention-relevant features
-- **Feature reconstruction**: Balancing SAE reconstruction quality with interpretability
-
-### Methodological Questions
-
-- **Ground truth validation**: How do we verify feature-level attention patterns?
-- **Cross-head interactions**: How do multiple attention heads compose in feature space?
-- **Scale dependency**: Do patterns hold across different model sizes?
-
-
-## 📊 Evaluation Metrics
-
-- **Reconstruction accuracy**: How well does feature-space attention predict token-space attention?
-- **Interpretability gain**: Can we generate meaningful "feature X attends to feature Y" explanations?
-- **Pattern recovery**: Do we recover known circuits (IOI, induction) at feature level?
-- **Computational efficiency**: Cost vs. benefit of feature-space analysis
-
-## 🔄 Reproducibility
-
-All experiments use:
-- **Model**: GPT-2 Small
-- **SAEs**: Pre-trained from SAELens (`gpt2-small-resid-post-v5-32k`)
-- **Analysis layer**: Layer 5, Head 7 (configurable)

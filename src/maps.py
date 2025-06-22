@@ -20,8 +20,7 @@ from jaxtyping import Float, Int
 from torch import Tensor
 import torch.nn.functional as F
 
-
-device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+from src.utils import device
 
 
 @torch.inference_mode()

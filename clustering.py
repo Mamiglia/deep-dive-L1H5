@@ -2,142 +2,37 @@
 from matplotlib import pyplot as plt
 import torch
 import numpy as np
-from transformer_lens import ActivationCache, HookedTransformer, utils
-from transformer_lens.components import MLP, Embed, LayerNorm, Unembed
-from transformer_lens.hook_points import HookPoint
-
-
-from sae_lens import HookedSAETransformer, SAE
-from sae_lens.toolkit.pretrained_saes_directory import get_pretrained_saes_directory
-from IPython.display import HTML, IFrame, clear_output, display
-
-import torch.nn.functional as F
-import random
 import json
 import seaborn as sns
-
-def barplot(values, **set_args):
-    plt.figure(figsize=(16,8))
-    ax = sns.barplot(values.numpy(force=True))
-    ax.set_xticks([])  # Remove x-axis ticks
-    if set_args:
-        ax.set(**set_args)
-    for i, v in enumerate(values.numpy(force=True)):
-        ax.text(i, v * 1.1,  str(i), ha='center', va='bottom', fontsize=10)
-    return ax
-
-def clean_mem():
-    import gc
-    
-    # for var in ['loss', 'E']:
-    #     if var in locals():
-    #         del locals()[var]
-    #     elif var in globals():
-    #         del globals()[var]
-        
-    gc.collect()
-    torch.cuda.empty_cache()
-
-from transformers import PreTrainedTokenizerBase
 from jaxtyping import Float, Int
 import circuitsvis as cv
+from tqdm import tqdm
+import pandas as pd
+import networkx as nx
+import leidenalg
+import igraph as ig
+from transformer_lens import HookedTransformer
+
+from src.ablation import get_vocab_attn1_input
+from src.utils import clean_mem
 
 # %load_ext autoreload
 # %autoreload 2
 
-from src.maps import *
-from src.utils import *
-from tqdm import tqdm
-device = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
-torch.cuda.set_device(0)
-
 LAYER = 1
 HEAD_IDX= 5
-HOOK_POINT = f"blocks.{LAYER-1}.hook_resid_post"
-model = HookedSAETransformer.from_pretrained("gpt2-small")
+model = HookedTransformer.from_pretrained("gpt2-small")
 
+# load token frequencies and subset
 import pandas as pd
 token_freq_df = pd.read_csv("out/token_frequencies.csv")
-
 LIM = 3000
 IDX = token_freq_df.id[:LIM]
 VOCAB = token_freq_df.token[:LIM]
-#%%
-VOCAB_SIZE = model.tokenizer.vocab_size
 
+# get residuals for that subset
+E : Float[torch.Tensor, "batch pos d_model"] = get_vocab_attn1_input(model).clone()[IDX]
 
-def ablate_component(
-    t : Float[Tensor, "batch pos d_model"],
-    hook: HookPoint,
-):
-    """Mean-ablate a component"""
-    return t.mean(dim=(0,1))
-
-def ablate_reduce_component(
-    t : Float[Tensor, "batch pos d_model"],
-    hook: HookPoint,
-):
-    print(hook.name)
-    return t[:,:1024,:]
-
-def stop_computation(t, hook):
-    raise StopIteration(f"Stopping model mid-execution at {hook.name}")
-
-@torch.inference_mode()
-def vocab_attn(
-    model: HookedTransformer,
-) -> Float[Tensor, "layer pos"]:
-    """
-    Returns an array of results of patching each position at each layer in the residual
-    stream, using the value from the clean cache.
-
-    The results are calculated using the patching_metric function, which should be
-    called on the model's logit output.
-    """
-    model.reset_hooks()
-    vocab = torch.arange(0, VOCAB_SIZE, device=device)
-    ablate_components = [
-        'hook_pos_embed',
-        'blocks.0.hook_attn_out',
-        # 'blocks.0.hook_mlp_out',
-    ]
-    # This dict will store the cached activations
-    activation_cache = {}
-    
-    out_hook = 'blocks.1.ln1.hook_normalized' # 'hook_embed'# 
-
-    # Hook function to cache activations
-    def cache_hook(activation, hook):
-        activation_cache[hook.name] = activation
-        
-    def replace_hook(activation, hook):
-        return activation_cache['blocks.0.hook_mlp_out']
-        
-    model.cfg.use_attn_in = False
-        
-    hooks = [
-        # ("blocks.1.attn.hook_q", cache_hook),
-        # ("blocks.1.attn.hook_k", cache_hook),
-        ('blocks.0.ln1.hook_normalized', ablate_reduce_component),
-        # ('blocks.0.hook_mlp_out', cache_hook),
-        # ('blocks.0.hook_resid_post', replace_hook ),
-        (out_hook, cache_hook),  
-        (out_hook, stop_computation),  
-    ]
-    for component in ablate_components:
-        hooks.append((component, ablate_component))
-        
-    print(hooks)
-    try:
-        model.run_with_hooks(vocab, fwd_hooks=hooks)
-    except StopIteration as e:
-        print(e)
-
-    model.reset_hooks()
-    return activation_cache[out_hook][0,:]
-
-
-E = vocab_attn(model).clone()[IDX]
 # %%
 W_Q = model.blocks[1].attn.W_Q[5].clone().detach()
 W_K = model.blocks[1].attn.W_K[5].clone().detach()
@@ -148,16 +43,9 @@ del E, W_Q, W_K, token_freq_df
 clean_mem()
 
 # %%
-# Example usage:
-TOKENS_EX = [
-    ' red',' 69','Monday',' John',' +',' if',' Italy',
-]
-# display_most_attended_tokens(TOKENS_EX, attn, model.tokenizer, k=10)
-
-# %%
-sns.heatmap(attn[-32:,-32:].numpy(force=True),
-    xticklabels=VOCAB[-32:],
-    yticklabels = VOCAB[-32:],
+sns.heatmap(attn[:32,:32].numpy(force=True),
+    xticklabels=VOCAB[:32],
+    yticklabels = VOCAB[:32],
     vmin=0, 
     # vmax=180    
 )
@@ -398,4 +286,3 @@ with open("docs/token_similarity_graphology.json", "w") as f:
     except ImportError:
         json.dump(graphology_json, f, indent=2)
 print("Graph saved to docs/token_similarity_graphology.json")
-# %%
